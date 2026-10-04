@@ -154,6 +154,8 @@ fn render_help(frame: &mut Frame) {
         ("Ctrl+H / .", "hidden files"),
         ("s / S  (header click)", "sort by / reverse"),
         ("Space / Ctrl+A", "mark / mark all"),
+        ("Ctrl+click / Shift+click", "mark one / mark a range"),
+        ("drag onto a folder", "move (hold Ctrl: copy)"),
         ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
         ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
         ("Shift+Del", "delete for good (asks first)"),

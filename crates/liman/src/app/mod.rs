@@ -59,6 +59,14 @@ impl View {
     }
 }
 
+/// Mouse button held on an entry.
+struct Drag {
+    from: usize,
+    start: (u16, u16),
+    /// Moved far enough to count as dragging.
+    active: bool,
+}
+
 /// A listing of files found by a shell command (`find`, `fd`, `grep -l`, ...).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Results {
@@ -143,6 +151,10 @@ pub struct App {
     /// Panel height chosen with Ctrl+↑/↓ or by dragging its top border; `None` = 40% of the window.
     pub term_height: Option<u16>,
     dragging_panel: bool,
+    /// Entry index of the last plain or Ctrl click (start of a Shift+click range).
+    click_anchor: Option<usize>,
+    /// Left button held on an entry (possibly the start of a drag-and-drop).
+    drag: Option<Drag>,
     /// The large view `v` returns to from the compact list.
     last_large_view: View,
     /// A question in the middle of the screen (paste conflicts, permanent delete).
@@ -211,6 +223,8 @@ impl App {
             term_height: None,
             dragging_panel: false,
             last_large_view: View::Grid,
+            click_anchor: None,
+            drag: None,
             results: None,
             theme_picker: None,
             search_input: None,
@@ -490,13 +504,22 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) if self.dragging_panel => {
                 self.dragging_panel = false
             }
-            MouseEventKind::Down(MouseButton::Left) => self.on_click(mouse.column, mouse.row),
-            _ => return, // movement, drag, release: nothing to do yet
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.on_click(mouse.column, mouse.row, mouse.modifiers)
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.drag.is_some() => {
+                self.on_drag(mouse.column, mouse.row)
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.drag.is_some() => {
+                let copy = mouse.modifiers.contains(KeyModifiers::CONTROL);
+                self.on_drop(mouse.column, mouse.row, copy);
+            }
+            _ => return, // movement, other buttons: nothing to do
         }
         self.dirty = true;
     }
 
-    fn on_click(&mut self, column: u16, row: u16) {
+    fn on_click(&mut self, column: u16, row: u16, modifiers: KeyModifiers) {
         if let Some((selected, _)) = self.theme_picker {
             let inside = self.picker_area.contains((column, row).into());
             let index = usize::from(row.saturating_sub(self.picker_area.y));
@@ -549,22 +572,36 @@ impl App {
             let descending = key == self.sort.key && !self.sort.descending;
             return self.set_sort(liman_core::sort::SortOrder { key, descending });
         }
-        let hit = match self.drawn_view.list_mode() {
-            Some(mode) => FileList::row_at(self.list_area, self.table.offset(), mode, column, row),
-            None => GridView::index_at(
-                self.list_area,
-                self.table.offset(),
-                self.drawn_grid_level,
-                column,
-                row,
-            ),
-        };
-        let Some(index) = hit else {
+        let Some(index) = self.entry_at(column, row) else {
             return;
         };
-        if index >= self.visible.len() {
+        // Ctrl+click: mark / unmark one; Shift+click: mark the range from the last click.
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            let path = self.visible_entries()[index].path.clone();
+            if !self.marked.remove(&path) {
+                self.marked.insert(path);
+            }
+            self.table.select(Some(index));
+            self.click_anchor = Some(index);
             return;
         }
+        if modifiers.contains(KeyModifiers::SHIFT) {
+            let anchor = self.click_anchor.or(self.table.selected()).unwrap_or(index);
+            let (from, to) = (anchor.min(index), anchor.max(index));
+            let paths: Vec<_> = self.visible_entries()[from..=to]
+                .iter()
+                .map(|e| e.path.clone())
+                .collect();
+            self.marked.extend(paths);
+            self.table.select(Some(index));
+            return;
+        }
+        self.click_anchor = Some(index);
+        self.drag = Some(Drag {
+            from: index,
+            start: (column, row),
+            active: false,
+        });
         let now = Instant::now();
         let double = self
             .last_click
@@ -575,6 +612,70 @@ impl App {
             self.activate_selected();
         } else {
             self.last_click = Some((now, index));
+        }
+    }
+
+    /// The visible entry under terminal cell (`column`, `row`) in the list or grid.
+    fn entry_at(&self, column: u16, row: u16) -> Option<usize> {
+        let hit = match self.drawn_view.list_mode() {
+            Some(mode) => FileList::row_at(self.list_area, self.table.offset(), mode, column, row),
+            None => GridView::index_at(
+                self.list_area,
+                self.table.offset(),
+                self.drawn_grid_level,
+                column,
+                row,
+            ),
+        };
+        hit.filter(|&i| i < self.visible.len())
+    }
+
+    /// A drag becomes real after the mouse moved a couple of cells (a click may wobble).
+    fn on_drag(&mut self, column: u16, row: u16) {
+        if let Some(drag) = &mut self.drag
+            && !drag.active
+            && (column.abs_diff(drag.start.0) + row.abs_diff(drag.start.1)) >= 2
+        {
+            drag.active = true;
+            self.message = Some("Drop on a folder to move (hold Ctrl to copy)".into());
+        }
+    }
+
+    /// Mouse released after a drag: move / copy onto the folder or place under the pointer.
+    fn on_drop(&mut self, column: u16, row: u16, copy: bool) {
+        let Some(drag) = self.drag.take() else {
+            return;
+        };
+        if !drag.active {
+            return;
+        }
+        let entries = self.visible_entries();
+        let Some(dragged) = entries.get(drag.from).map(|e| e.path.clone()) else {
+            return;
+        };
+        let sources: Vec<PathBuf> = if self.marked.contains(&dragged) {
+            self.targets()
+        } else {
+            vec![dragged]
+        };
+        let folder = self
+            .entry_at(column, row)
+            .map(|i| entries[i])
+            .filter(|e| e.is_dir)
+            .map(|e| e.path.clone())
+            .or_else(|| {
+                Sidebar::row_at(self.sidebar_area, self.sidebar.len(), column, row)
+                    .map(|i| &self.sidebar[i])
+                    .filter(|p| p.kind != liman_core::SpecialDir::Recent)
+                    .map(|p| p.path.clone())
+            });
+        match folder {
+            Some(dest)
+                if !sources.contains(&dest) && !sources.iter().any(|s| dest.starts_with(s)) =>
+            {
+                self.drop_onto(sources, dest, copy);
+            }
+            _ => self.message = Some("Dropped outside a folder: nothing done".into()),
         }
     }
 

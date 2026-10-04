@@ -166,6 +166,29 @@ impl App {
         }
     }
 
+    /// Drag and drop: move (or copy with Ctrl) `sources` into `dest`. Name conflicts keep both.
+    pub(super) fn drop_onto(&mut self, sources: Vec<PathBuf>, dest: PathBuf, copy: bool) {
+        let n = liman_core::format::items(sources.len());
+        let name = dest
+            .file_name()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (job, label) = if copy {
+            (
+                Job::Copy { sources, dest },
+                format!("Copying {n} to “{name}”"),
+            )
+        } else {
+            (
+                Job::Move { sources, dest },
+                format!("Moving {n} to “{name}”"),
+            )
+        };
+        if self.start_job(job, label) {
+            self.marked.clear();
+        }
+    }
+
     /// Shift+Del: asks before deleting for good.
     pub(super) fn ask_delete(&mut self) {
         let paths = self.targets();
@@ -535,6 +558,53 @@ mod tests {
         assert!(!dir.join("a.txt").exists());
         assert!(!dir.join(".trash/files/a.txt").exists());
         assert!(app.history.is_empty()); // not undoable
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn mouse(
+        kind: ratatui::crossterm::event::MouseEventKind,
+        column: u16,
+        row: u16,
+        modifiers: KeyModifiers,
+    ) -> AppEvent {
+        AppEvent::Input(Event::Mouse(ratatui::crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers,
+        }))
+    }
+
+    #[test]
+    fn ctrl_and_shift_clicks_mark_and_dragging_moves_into_a_folder() {
+        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+        let (dir, mut app, rx) = setup("drag");
+        app.list_area = ratatui::layout::Rect::new(0, 0, 80, 20); // rows start at y = 2: dest, a.txt, b.txt
+        app.drawn_view = crate::app::View::Detailed;
+        let none = KeyModifiers::NONE;
+        app.handle(mouse(MouseEventKind::Down(MouseButton::Left), 10, 3, none)); // a.txt
+        app.handle(mouse(MouseEventKind::Up(MouseButton::Left), 10, 3, none));
+        app.handle(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            10,
+            4,
+            KeyModifiers::SHIFT,
+        )); // to b.txt
+        assert_eq!(app.marked.len(), 2);
+        app.handle(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            10,
+            4,
+            KeyModifiers::CONTROL,
+        )); // unmark b
+        assert_eq!(app.marked.len(), 1);
+        // drag a.txt (marked) onto dest/
+        app.handle(mouse(MouseEventKind::Down(MouseButton::Left), 10, 3, none));
+        app.handle(mouse(MouseEventKind::Drag(MouseButton::Left), 12, 2, none));
+        app.handle(mouse(MouseEventKind::Up(MouseButton::Left), 12, 2, none));
+        pump(&mut app, &rx, loaded);
+        assert!(dir.join("dest/a.txt").exists() && !dir.join("a.txt").exists());
+        assert!(dir.join("b.txt").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
