@@ -1,0 +1,102 @@
+//! Reading a directory into sorted [`Entry`] values. Blocking: call it from a worker thread.
+
+use std::fs;
+use std::io;
+use std::path::Path;
+
+use crate::sort::sort_entries;
+use crate::{Entry, FileType};
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListOptions {
+    pub show_hidden: bool,
+}
+
+pub fn list_dir(dir: &Path, opts: ListOptions) -> io::Result<Vec<Entry>> {
+    let mut entries = Vec::new();
+    for item in fs::read_dir(dir)? {
+        let Ok(item) = item else { continue };
+        let name = item.file_name().to_string_lossy().into_owned();
+        if !opts.show_hidden && name.starts_with('.') {
+            continue;
+        }
+        entries.push(read_entry(item.path(), name, opts));
+    }
+    sort_entries(&mut entries);
+    Ok(entries)
+}
+
+fn read_entry(path: std::path::PathBuf, name: String, opts: ListOptions) -> Entry {
+    let link = fs::symlink_metadata(&path).ok();
+    let is_symlink = link.as_ref().is_some_and(|m| m.file_type().is_symlink());
+    // Follow symlinks for size and type; a broken link falls back to the link itself.
+    let meta = fs::metadata(&path).ok().or(link);
+    let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+
+    Entry {
+        file_type: FileType::from_path(&path, is_dir),
+        size: if is_dir {
+            0
+        } else {
+            meta.as_ref().map_or(0, |m| m.len())
+        },
+        // One extra read_dir per folder, not recursive. Fine for local disks; slow mounts are a later concern (Q11).
+        item_count: is_dir.then(|| count_children(&path, opts)).flatten(),
+        modified: meta.and_then(|m| m.modified().ok()),
+        name,
+        path,
+        is_dir,
+        is_symlink,
+    }
+}
+
+fn count_children(dir: &Path, opts: ListOptions) -> Option<usize> {
+    let iter = fs::read_dir(dir).ok()?;
+    Some(
+        iter.filter_map(Result::ok)
+            .filter(|e| opts.show_hidden || !e.file_name().to_string_lossy().starts_with('.'))
+            .count(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tempdir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("liman-test-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn lists_folders_first_and_hides_dotfiles() {
+        let dir = tempdir("list");
+        fs::create_dir(dir.join("Music")).unwrap();
+        fs::write(dir.join("Music/song.mp3"), b"x").unwrap();
+        fs::write(dir.join("Music/.hidden"), b"x").unwrap();
+        fs::write(dir.join("b.txt"), b"hello").unwrap();
+        fs::write(dir.join("a10.pdf"), b"").unwrap();
+        fs::write(dir.join("a2.pdf"), b"").unwrap();
+        fs::write(dir.join(".secret"), b"").unwrap();
+
+        let entries = list_dir(&dir, ListOptions::default()).unwrap();
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["Music", "a2.pdf", "a10.pdf", "b.txt"]);
+        assert_eq!(entries[0].item_count, Some(1));
+        assert_eq!(entries[0].file_type, FileType::Folder);
+        assert_eq!(entries[3].size, 5);
+
+        let all = list_dir(&dir, ListOptions { show_hidden: true }).unwrap();
+        assert_eq!(all.len(), 5);
+        assert_eq!(all[0].item_count, Some(2));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn missing_directory_is_an_error() {
+        assert!(list_dir(Path::new("/definitely/not/here"), ListOptions::default()).is_err());
+    }
+}
