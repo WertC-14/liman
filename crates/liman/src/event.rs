@@ -29,6 +29,8 @@ pub enum AppEvent {
     JobFinished(Outcome),
     /// Bytes the embedded shell wrote.
     TermOutput(Vec<u8>),
+    /// Something changed in this folder (after a short quiet period).
+    FolderChanged(PathBuf),
     /// The embedded shell exited.
     TermExited,
     /// The embedded shell finished its start-up output (time to clear the greeting).

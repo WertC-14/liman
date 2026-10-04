@@ -6,6 +6,7 @@ mod open;
 mod terminal;
 mod tui;
 mod ui;
+mod watch;
 mod worker;
 
 use std::io;

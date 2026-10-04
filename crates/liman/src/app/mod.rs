@@ -165,6 +165,8 @@ pub struct App {
     drag: Option<Drag>,
     /// The large view `v` returns to from the compact list.
     last_large_view: View,
+    /// Watches the open folder for changes made by anyone.
+    watch: crate::watch::FolderWatch,
     /// Command palette (Ctrl+P) or right-click menu.
     pub menu: Option<Menu>,
     /// Where the menu was drawn (for clicks). Written by the UI.
@@ -243,6 +245,7 @@ impl App {
             theme_picker: None,
             search_input: None,
             dialog: None,
+            watch: crate::watch::FolderWatch::start(tx.clone()),
             menu: None,
             menu_area: Rect::default(),
             rename_after_load: false,
@@ -281,6 +284,24 @@ impl App {
         self.results_pending = None;
         self.start_loading(&path);
         worker::spawn_listing(self.tx.clone(), self.generation, path, self.options);
+    }
+
+    /// Reads the open folder again without blanking the view: the old list stays until the new one
+    /// arrives; selection, marks and filter are kept.
+    pub fn refresh(&mut self) {
+        if self.select_after_load.is_none() {
+            self.select_after_load = self.selected_entry().map(|e| e.name.clone());
+        }
+        self.generation += 1;
+        self.current_generation
+            .store(self.generation, std::sync::atomic::Ordering::Relaxed);
+        self.loading_path = Some(self.cwd.clone());
+        worker::spawn_listing(
+            self.tx.clone(),
+            self.generation,
+            self.cwd.clone(),
+            self.options,
+        );
     }
 
     /// Shows the files a shell command printed, like a folder listing (Backspace returns to the folder).
@@ -325,6 +346,11 @@ impl App {
             AppEvent::JobFinished(outcome) => self.on_job_finished(outcome),
             AppEvent::TermOutput(bytes) => self.on_term_output(&bytes),
             AppEvent::TermExited => self.on_term_exited(),
+            AppEvent::FolderChanged(dir) => {
+                if dir == self.cwd && self.results.is_none() && self.loading_path.is_none() {
+                    self.refresh();
+                }
+            }
             AppEvent::TermQuiet => {
                 let Some(term) = &mut self.terminal else {
                     return;
@@ -1251,6 +1277,9 @@ impl App {
         let from_shell = std::mem::take(&mut self.load_from_shell);
         if result.is_ok() {
             self.sync_shell_to(&path, from_shell);
+            if self.results_pending.is_none() && self.results.is_none() {
+                self.watch.watch(&path);
+            }
         }
         // History: a move to another folder (not back/forward, not a reload) is a new step.
         let from_history = std::mem::take(&mut self.moving_in_history);

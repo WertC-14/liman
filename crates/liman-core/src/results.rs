@@ -58,6 +58,8 @@ pub fn paths_from_output(text: &str, base: &Path) -> Vec<PathBuf> {
             let (prefix, _) = line.split_once(':')?;
             resolve(prefix, base).filter(|p| p.is_file())
         });
+        // Prompts often show the current folder; the folder itself or a parent is never a result.
+        let candidate = candidate.filter(|p| !base.starts_with(p));
         if let Some(path) = candidate
             && seen.insert(path.clone())
         {
@@ -122,6 +124,10 @@ mod tests {
         );
         let paths = paths_from_output(&output, &dir);
         assert_eq!(paths, [dir.join("src/main.rs"), dir.join("a.txt")]);
+
+        // A prompt line with the current folder (or a parent) is not a result.
+        let prompt = format!("{}\n{}\n", dir.display(), dir.parent().unwrap().display());
+        assert!(paths_from_output(&prompt, &dir).is_empty());
 
         let entries = entries_for(&paths, &dir);
         assert_eq!(entries[0].name, "src/main.rs");

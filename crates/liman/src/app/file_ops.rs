@@ -321,7 +321,12 @@ impl App {
         if outcome.done.is_undoable() {
             self.history.push(outcome.done);
         }
-        self.load(self.cwd.clone());
+        // Read the folder again in place (no "Loading…" flash); in a results view, back to the folder.
+        if self.results.is_some() {
+            self.load(self.cwd.clone());
+        } else {
+            self.refresh();
+        }
     }
 }
 
@@ -369,7 +374,7 @@ mod tests {
     }
 
     fn loaded(app: &App) -> bool {
-        matches!(app.listing, Listing::Ready(_)) && app.job.is_none()
+        matches!(app.listing, Listing::Ready(_)) && app.job.is_none() && app.loading_path.is_none()
     }
 
     /// Temp home with a.txt, b.txt and dest/; the app shows it with a private trash.
@@ -605,6 +610,16 @@ mod tests {
         pump(&mut app, &rx, loaded);
         assert!(dir.join("dest/a.txt").exists() && !dir.join("a.txt").exists());
         assert!(dir.join("b.txt").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn files_created_outside_show_up_without_reopening() {
+        let (dir, mut app, rx) = setup("watch");
+        fs::write(dir.join("new.txt"), "from outside").unwrap();
+        pump(&mut app, &rx, |app| {
+            loaded(app) && app.visible_entries().iter().any(|e| e.name == "new.txt")
+        });
         fs::remove_dir_all(&dir).unwrap();
     }
 

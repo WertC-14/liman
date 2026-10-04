@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 liman-core.workspace = true
 liman-widgets.workspace = true
+notify = { version = "8", default-features = false }
 portable-pty = "0.9"
 ratatui = "0.30"
 vt100 = "0.16"
