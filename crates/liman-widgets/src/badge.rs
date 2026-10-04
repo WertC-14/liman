@@ -4,13 +4,18 @@ use liman_core::Entry;
 use ratatui::style::Style;
 use ratatui::text::Span;
 
+use crate::symbols;
 use crate::theme::{text_on, type_color};
 
 /// Badge width in cells, including padding.
 pub const WIDTH: u16 = 6;
 
-/// Short label: the extension in upper case (max 4 chars), `▸` for folders, `·` without extension.
+/// Short label: the extension in upper case (max 4 chars), a symbol for well-known folders
+/// (`↓` Downloads, `♪` Music), `▸` for other folders, `·` without extension.
 pub fn label(entry: &Entry) -> String {
+    if let Some(kind) = entry.special {
+        return symbols::special_dir(kind).into();
+    }
     if entry.is_dir {
         return "▸".into();
     }
@@ -52,7 +57,10 @@ mod tests {
         assert_eq!(label(&entry("main.rs", false)), "RS");
         assert_eq!(label(&entry("a.markdown", false)), "MARK");
         assert_eq!(label(&entry("Makefile", false)), "·");
-        assert_eq!(label(&entry("Downloads", true)), "▸");
+        assert_eq!(label(&entry("Projects", true)), "▸");
+        let mut downloads = entry("Downloads", true);
+        downloads.special = Some(liman_core::SpecialDir::Downloads);
+        assert_eq!(label(&downloads), "↓");
     }
 
     #[test]
