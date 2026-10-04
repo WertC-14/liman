@@ -32,6 +32,7 @@ fn main() -> io::Result<()> {
         if app.dirty {
             tui.draw(|frame| ui::render(frame, &mut app))?;
             app.dirty = false;
+            app.after_draw();
         }
 
         // Block until the next event, then drain everything that queued up meanwhile,

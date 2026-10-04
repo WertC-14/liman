@@ -67,11 +67,15 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
                     area,
                     &mut app.table,
                 ),
-                None => frame.render_stateful_widget(
-                    GridView::new(&rows, &app.icons).marked(&app.marked),
-                    area,
-                    &mut app.table,
-                ),
+                None => {
+                    let wanted = app.grid_size.unwrap_or_else(|| grid::best_icon_size(area));
+                    app.drawn_icon_size = grid::fitting_icon_size(wanted, area);
+                    frame.render_stateful_widget(
+                        GridView::new(&rows, &app.icons, app.drawn_icon_size).marked(&app.marked),
+                        area,
+                        &mut app.table,
+                    );
+                }
             }
             return;
         }
@@ -88,7 +92,7 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
 /// Falls back to a smaller view when the wanted one does not fit: the grid needs one whole tile,
 /// boxes need room for two entries.
 fn fitting_view(wanted: View, area: Rect) -> View {
-    let grid_fits = area.width >= grid::TILE_WIDTH && area.height >= grid::TILE_HEIGHT;
+    let grid_fits = area.width >= grid::MIN_TILE.0 && area.height >= grid::MIN_TILE.1;
     let boxes_fit = area.height >= file_list::HEADER_HEIGHT + 2 * ListMode::Normal.row_height()
         && area.width >= 50;
     match wanted {
@@ -154,7 +158,11 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         };
         spans.push(Span::raw(format!(" | {} {verb}", format::items(clip.paths.len()))).fg(DIM));
     }
-    spans.push(Span::raw(format!(" | {} view", app.drawn_view.name())).fg(DIM));
+    let view = match app.drawn_view {
+        View::Grid => format!("Grid {}px", app.drawn_icon_size),
+        other => other.name().to_string(),
+    };
+    spans.push(Span::raw(format!(" | {view} view")).fg(DIM));
     spans.push(Span::raw("  "));
     if let Some(message) = &app.message {
         spans.push(Span::raw(format!("{message}  ")).fg(FG));

@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use liman_core::Entry;
-use liman_core::icons::{ICON_SIZE, IconPixels, icon_key};
+use liman_core::icons::{ICON_SIZES, IconPixels, icon_key};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -21,25 +21,63 @@ use ratatui::widgets::{StatefulWidget, TableState, Widget};
 use crate::badge::badge;
 use crate::theme::{BG, DIM, FG, MARKED_BG, SELECTED_BG};
 
-/// Tile size in terminal cells: icon (16×8) plus a name line and gaps.
-pub const TILE_WIDTH: u16 = 20;
-pub const TILE_HEIGHT: u16 = 10;
-const ICON_COLS: u16 = ICON_SIZE as u16;
-const ICON_ROWS: u16 = ICON_COLS / 2;
+/// Tile size in terminal cells for an icon of `icon_size` pixels: the icon (one column per pixel,
+/// one row per two pixels), a name line, and gaps.
+pub const fn tile_size(icon_size: u32) -> (u16, u16) {
+    let cols = icon_size as u16;
+    (cols + 4, cols / 2 + 2)
+}
+
+/// Smallest tile, for "does the grid fit at all".
+pub const MIN_TILE: (u16, u16) = tile_size(ICON_SIZES[0]);
+
+/// The largest icon size that still shows a useful amount of files: at least 4 tiles per row
+/// and 2 rows (or the smallest size if even that does not fit).
+pub fn best_icon_size(area: Rect) -> u32 {
+    ICON_SIZES
+        .iter()
+        .rev()
+        .copied()
+        .find(|&size| {
+            let (w, h) = tile_size(size);
+            area.width / w >= 4 && area.height / h >= 2
+        })
+        .unwrap_or(ICON_SIZES[0])
+}
+
+/// The largest icon size not above `wanted` for which one tile fits in `area`.
+pub fn fitting_icon_size(wanted: u32, area: Rect) -> u32 {
+    ICON_SIZES
+        .iter()
+        .rev()
+        .copied()
+        .filter(|&size| size <= wanted)
+        .find(|&size| {
+            let (w, h) = tile_size(size);
+            area.width >= w && area.height >= h
+        })
+        .unwrap_or(ICON_SIZES[0])
+}
 
 pub struct GridView<'a> {
     entries: &'a [&'a Entry],
     icons: &'a HashMap<String, IconPixels>,
     marked: Option<&'a HashSet<PathBuf>>,
+    icon_size: u32,
 }
 
 impl<'a> GridView<'a> {
     /// `icons` maps [`icon_key`] to rendered icons; entries without one show their badge until it arrives.
-    pub fn new(entries: &'a [&'a Entry], icons: &'a HashMap<String, IconPixels>) -> Self {
+    pub fn new(
+        entries: &'a [&'a Entry],
+        icons: &'a HashMap<String, IconPixels>,
+        icon_size: u32,
+    ) -> Self {
         Self {
             entries,
             icons,
             marked: None,
+            icon_size,
         }
     }
 
@@ -49,23 +87,30 @@ impl<'a> GridView<'a> {
     }
 
     /// Tiles per row for an area of this width (at least one).
-    pub fn columns(width: u16) -> usize {
-        usize::from((width / TILE_WIDTH).max(1))
+    pub fn columns(width: u16, icon_size: u32) -> usize {
+        usize::from((width / tile_size(icon_size).0).max(1))
     }
 
     /// Which entry index is at terminal cell (`column`, `row`); `offset` is the first visible tile row.
-    pub fn index_at(area: Rect, offset: usize, column: u16, row: u16) -> Option<usize> {
+    pub fn index_at(
+        area: Rect,
+        offset: usize,
+        icon_size: u32,
+        column: u16,
+        row: u16,
+    ) -> Option<usize> {
+        let (tile_w, tile_h) = tile_size(icon_size);
         let inside =
             column >= area.x && column < area.right() && row >= area.y && row < area.bottom();
         if !inside {
             return None;
         }
-        let tile_col = usize::from((column - area.x) / TILE_WIDTH);
-        let cols = Self::columns(area.width);
+        let tile_col = usize::from((column - area.x) / tile_w);
+        let cols = Self::columns(area.width, icon_size);
         if tile_col >= cols {
             return None; // the unused strip at the right edge
         }
-        let tile_row = usize::from((row - area.y) / TILE_HEIGHT) + offset;
+        let tile_row = usize::from((row - area.y) / tile_h) + offset;
         Some(tile_row * cols + tile_col)
     }
 }
@@ -74,8 +119,9 @@ impl StatefulWidget for GridView<'_> {
     type State = TableState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut TableState) {
-        let cols = Self::columns(area.width);
-        let visible_rows = usize::from((area.height / TILE_HEIGHT).max(1));
+        let (tile_w, tile_h) = tile_size(self.icon_size);
+        let cols = Self::columns(area.width, self.icon_size);
+        let visible_rows = usize::from((area.height / tile_h).max(1));
         // Keep the selected tile on screen.
         if let Some(selected) = state.selected() {
             let row = selected / cols;
@@ -96,9 +142,9 @@ impl StatefulWidget for GridView<'_> {
             .take(visible_rows * cols)
         {
             let slot = i - first;
-            let x = area.x + (slot % cols) as u16 * TILE_WIDTH;
-            let y = area.y + (slot / cols) as u16 * TILE_HEIGHT;
-            let tile = Rect::new(x, y, TILE_WIDTH, TILE_HEIGHT - 1).intersection(area);
+            let x = area.x + (slot % cols) as u16 * tile_w;
+            let y = area.y + (slot / cols) as u16 * tile_h;
+            let tile = Rect::new(x, y, tile_w, tile_h - 1).intersection(area);
             let bg = if state.selected() == Some(i) {
                 SELECTED_BG
             } else if self.marked.is_some_and(|m| m.contains(&entry.path)) {
@@ -113,27 +159,30 @@ impl StatefulWidget for GridView<'_> {
 
 impl GridView<'_> {
     fn render_tile(&self, entry: &Entry, tile: Rect, bg: Color, buf: &mut Buffer) {
+        let (tile_w, _) = tile_size(self.icon_size);
+        let icon_cols = self.icon_size as u16;
+        let icon_rows = icon_cols / 2;
         buf.set_style(tile, Style::new().bg(bg));
-        let icon_x = tile.x + (TILE_WIDTH - ICON_COLS) / 2;
-        match self.icons.get(&icon_key(entry)) {
+        let icon_x = tile.x + (tile_w - icon_cols) / 2;
+        match self.icons.get(&icon_key(entry, self.icon_size)) {
             Some(icon) => draw_icon(icon, icon_x, tile.y, bg, tile, buf),
             None => {
                 // Icon still loading: show the badge in the middle of where the icon will be.
                 let line = Line::from(badge(entry));
                 let w = line.width() as u16;
-                let area = Rect::new(tile.x + (TILE_WIDTH - w) / 2, tile.y + ICON_ROWS / 2, w, 1);
+                let area = Rect::new(tile.x + (tile_w - w) / 2, tile.y + icon_rows / 2, w, 1);
                 line.render(area.intersection(tile), buf);
             }
         }
-        let name_area = Rect::new(tile.x, tile.y + ICON_ROWS, TILE_WIDTH, 1).intersection(tile);
-        let name = truncate(&entry.name, usize::from(TILE_WIDTH) - 2);
+        let name_area = Rect::new(tile.x, tile.y + icon_rows, tile_w, 1).intersection(tile);
+        let name = truncate(&entry.name, usize::from(tile_w) - 2);
         let color = if bg == BG { FG } else { Color::White };
         Line::from(Span::styled(name, Style::new().fg(color)))
             .centered()
             .render(name_area, buf);
         if entry.is_symlink {
             Line::from(Span::styled("↗", Style::new().fg(DIM))).render(
-                Rect::new(icon_x + ICON_COLS - 1, tile.y, 1, 1).intersection(tile),
+                Rect::new(icon_x + icon_cols - 1, tile.y, 1, 1).intersection(tile),
                 buf,
             );
         }
@@ -143,8 +192,9 @@ impl GridView<'_> {
 /// Paints the icon at (`x`, `y`): one `▀` per pair of pixel rows, transparent pixels show `bg`.
 fn draw_icon(icon: &IconPixels, x: u16, y: u16, bg: Color, clip: Rect, buf: &mut Buffer) {
     let base = rgb(bg);
-    for row in 0..ICON_ROWS {
-        for col in 0..ICON_COLS {
+    let cols = icon.size as u16;
+    for row in 0..cols / 2 {
+        for col in 0..cols {
             let pos = (x + col, y + row);
             if !clip.contains(pos.into()) {
                 continue;
@@ -211,7 +261,7 @@ mod tests {
 
     /// Red top half, transparent bottom half.
     fn half_red() -> IconPixels {
-        let n = ICON_SIZE * ICON_SIZE;
+        let n = 16 * 16;
         let rgba = (0..n)
             .map(|i| {
                 if i < n / 2 {
@@ -221,21 +271,18 @@ mod tests {
                 }
             })
             .collect();
-        IconPixels {
-            size: ICON_SIZE,
-            rgba,
-        }
+        IconPixels { size: 16, rgba }
     }
 
     #[test]
     fn draws_icons_and_names_in_tiles() {
         let owned = [entry("a.pdf"), entry("b.pdf"), entry("c.rs")];
         let entries: Vec<&Entry> = owned.iter().collect();
-        let icons: HashMap<String, IconPixels> = [(icon_key(&owned[0]), half_red())].into();
+        let icons: HashMap<String, IconPixels> = [(icon_key(&owned[0], 16), half_red())].into();
         let area = Rect::new(0, 0, 40, 20); // 2 columns, 2 rows
         let mut buf = Buffer::empty(area);
         let mut state = TableState::default().with_selected(Some(1));
-        GridView::new(&entries, &icons).render(area, &mut buf, &mut state);
+        GridView::new(&entries, &icons, 16).render(area, &mut buf, &mut state);
 
         // Tile 0: icon starts at x = 2; top rows red, bottom rows background.
         assert_eq!(buf[(5, 0)].bg, Color::Rgb(255, 0, 0));
@@ -252,12 +299,12 @@ mod tests {
     #[test]
     fn index_at_maps_cells_to_entries() {
         let area = Rect::new(10, 2, 45, 30); // 2 columns (40 cells) + 5 unused
-        assert_eq!(GridView::index_at(area, 0, 10, 2), Some(0));
-        assert_eq!(GridView::index_at(area, 0, 31, 2), Some(1));
-        assert_eq!(GridView::index_at(area, 0, 52, 2), None); // unused right strip
-        assert_eq!(GridView::index_at(area, 0, 12, 13), Some(2)); // second tile row
-        assert_eq!(GridView::index_at(area, 3, 12, 13), Some(8)); // scrolled by 3 rows
-        assert_eq!(GridView::index_at(area, 0, 5, 5), None); // left of the area
+        assert_eq!(GridView::index_at(area, 0, 16, 10, 2), Some(0));
+        assert_eq!(GridView::index_at(area, 0, 16, 31, 2), Some(1));
+        assert_eq!(GridView::index_at(area, 0, 16, 52, 2), None); // unused right strip
+        assert_eq!(GridView::index_at(area, 0, 16, 12, 13), Some(2)); // second tile row
+        assert_eq!(GridView::index_at(area, 3, 16, 12, 13), Some(8)); // scrolled by 3 rows
+        assert_eq!(GridView::index_at(area, 0, 16, 5, 5), None); // left of the area
     }
 
     #[test]
@@ -268,8 +315,19 @@ mod tests {
         let area = Rect::new(0, 0, 40, 20); // 2 columns, 2 visible rows
         let mut buf = Buffer::empty(area);
         let mut state = TableState::default().with_selected(Some(9)); // row 4
-        GridView::new(&entries, &icons).render(area, &mut buf, &mut state);
+        GridView::new(&entries, &icons, 16).render(area, &mut buf, &mut state);
         assert_eq!(state.offset(), 3);
+    }
+
+    #[test]
+    fn icon_size_follows_the_space() {
+        assert_eq!(tile_size(16), (20, 10));
+        assert_eq!(tile_size(48), (52, 26));
+        assert_eq!(best_icon_size(Rect::new(0, 0, 220, 60)), 48); // 4 × 52 = 208
+        assert_eq!(best_icon_size(Rect::new(0, 0, 159, 36)), 32); // 4 × 36 = 144
+        assert_eq!(best_icon_size(Rect::new(0, 0, 80, 20)), 16);
+        assert_eq!(fitting_icon_size(48, Rect::new(0, 0, 40, 20)), 32);
+        assert_eq!(fitting_icon_size(24, Rect::new(0, 0, 300, 60)), 24);
     }
 
     #[test]

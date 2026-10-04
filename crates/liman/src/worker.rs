@@ -51,6 +51,7 @@ pub fn spawn_icons(
     tx: Sender<AppEvent>,
     theme: Arc<OnceLock<IconTheme>>,
     home: PathBuf,
+    size: u32,
     wanted: Vec<(String, Entry)>,
 ) {
     thread::spawn(move || {
@@ -58,7 +59,7 @@ pub fn spawn_icons(
             theme.get_or_init(|| IconTheme::load(detect_theme_name(&home).as_deref(), &home));
         let icons = wanted
             .into_iter()
-            .map(|(key, entry)| (key, load_icon(&entry, theme)))
+            .map(|(key, entry)| (key, load_icon(&entry, theme, size)))
             .collect();
         let _ = tx.send(AppEvent::Icons(icons));
     });

@@ -15,13 +15,16 @@ pub use theme::{IconTheme, detect_theme_name};
 
 use crate::Entry;
 
-/// Icon side length in pixels. One halfblock cell holds 1×2 pixels, so 16×16 pixels = 16×8 cells.
+/// Smallest icon side length in pixels. One halfblock cell holds 1×2 pixels, so 16×16 pixels = 16×8 cells.
 pub const ICON_SIZE: u32 = 16;
 
-/// Cache key: entries with the same key get the same icon (same candidate names, same fallback).
-pub fn icon_key(entry: &Entry) -> String {
+/// Grid zoom levels (pixels per side), smallest first.
+pub const ICON_SIZES: [u32; 4] = [16, 24, 32, 48];
+
+/// Cache key: entries with the same key get the same icon (same candidate names, fallback and size).
+pub fn icon_key(entry: &Entry, size: u32) -> String {
     format!(
-        "{}|{:?}|{:?}",
+        "{}|{:?}|{:?}@{size}",
         icon_names(entry).join(","),
         entry.special,
         entry.file_type
@@ -30,12 +33,12 @@ pub fn icon_key(entry: &Entry) -> String {
 
 /// The icon for `entry`: from the theme if it has one, else from liman's own set.
 /// Never fails; a broken theme file falls back to the embedded icon.
-pub fn load_icon(entry: &Entry, theme: &IconTheme) -> IconPixels {
+pub fn load_icon(entry: &Entry, theme: &IconTheme, size: u32) -> IconPixels {
     theme
         .find(&icon_names(entry))
         .and_then(|path| std::fs::read(path).ok())
-        .and_then(|svg| render_svg(&svg, ICON_SIZE))
-        .or_else(|| render_svg(embedded_svg(entry), ICON_SIZE))
+        .and_then(|svg| render_svg(&svg, size))
+        .or_else(|| render_svg(embedded_svg(entry), size))
         .expect("embedded icons are valid SVG")
 }
 
@@ -90,7 +93,11 @@ mod tests {
 
     #[test]
     fn falls_back_to_embedded_without_a_theme() {
-        let px = load_icon(&entry("Notes.pdf", false, None), &IconTheme::empty());
+        let px = load_icon(
+            &entry("Notes.pdf", false, None),
+            &IconTheme::empty(),
+            ICON_SIZE,
+        );
         assert_eq!(px.size, ICON_SIZE);
         let [r, g, b, _] = px.get(4, 14); // plain page area, away from the white glyph
         assert!(
@@ -100,18 +107,25 @@ mod tests {
     }
 
     #[test]
+    fn size_is_part_of_the_key_and_the_result() {
+        let e = entry("a.pdf", false, None);
+        assert_ne!(icon_key(&e, 16), icon_key(&e, 32));
+        assert_eq!(load_icon(&e, &IconTheme::empty(), 32).size, 32);
+    }
+
+    #[test]
     fn same_kind_same_key() {
         assert_eq!(
-            icon_key(&entry("a.pdf", false, None)),
-            icon_key(&entry("b.pdf", false, None))
+            icon_key(&entry("a.pdf", false, None), 16),
+            icon_key(&entry("b.pdf", false, None), 16)
         );
         assert_ne!(
-            icon_key(&entry("a.pdf", false, None)),
-            icon_key(&entry("a.rs", false, None))
+            icon_key(&entry("a.pdf", false, None), 16),
+            icon_key(&entry("a.rs", false, None), 16)
         );
         assert_ne!(
-            icon_key(&entry("x", true, None)),
-            icon_key(&entry("x", true, Some(SpecialDir::Music)))
+            icon_key(&entry("x", true, None), 16),
+            icon_key(&entry("x", true, Some(SpecialDir::Music)), 16)
         );
     }
 }
