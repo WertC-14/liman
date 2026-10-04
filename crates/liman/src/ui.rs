@@ -3,7 +3,7 @@
 
 use liman_core::format;
 use liman_widgets::theme::{BAR_BG, BG, DIM, FG};
-use liman_widgets::{FileList, ListMode, Sidebar, breadcrumb, sidebar};
+use liman_widgets::{FileList, ListMode, Sidebar, breadcrumb, file_list, sidebar};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Style, Stylize};
@@ -57,11 +57,12 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
         Listing::Ready(_) if app.visible.is_empty() => format!("Nothing matches “{}”", app.filter),
         Listing::Ready(entries) => {
             app.list_area = area;
+            app.drawn_view = fitting_view(app.view, area);
             // Borrow the fields directly (not through a method on `app`) so that `app.table`
             // can be borrowed mutably while `entries` is borrowed immutably.
             let rows: Vec<_> = app.visible.iter().map(|&i| &entries[i]).collect();
             frame.render_stateful_widget(
-                FileList::new(&rows, format::now(), ListMode::Detailed),
+                FileList::new(&rows, format::now(), app.drawn_view),
                 area,
                 &mut app.table,
             );
@@ -75,6 +76,16 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
     ])
     .areas(area);
     frame.render_widget(Paragraph::new(message).centered().fg(DIM), middle);
+}
+
+/// Boxes need room for at least two entries; otherwise fall back to the detailed view.
+fn fitting_view(wanted: ListMode, area: Rect) -> ListMode {
+    let min_height = file_list::HEADER_HEIGHT + 2 * ListMode::Normal.row_height();
+    if wanted == ListMode::Normal && (area.height < min_height || area.width < 50) {
+        ListMode::Detailed
+    } else {
+        wanted
+    }
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -98,6 +109,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         let size = size.map(|s| format!(" ({s})")).unwrap_or_default();
         spans.push(Span::raw(format!(" | “{}” selected{size}", entry.name)).fg(DIM));
     }
+    spans.push(Span::raw(format!(" | {} view", app.drawn_view.name())).fg(DIM));
     spans.push(Span::raw("  "));
     if let Some(message) = &app.message {
         spans.push(Span::raw(format!("{message}  ")).fg(FG));
@@ -163,6 +175,22 @@ mod tests {
         assert!(rows.iter().any(|r| r.contains("Loading")));
         assert!(rows[2].contains("⌂ Home")); // sidebar
         assert!(rows[7].contains("q quit"));
+    }
+
+    #[test]
+    fn normal_view_falls_back_to_detailed_when_too_small() {
+        assert_eq!(
+            fitting_view(ListMode::Normal, Rect::new(0, 0, 80, 30)),
+            ListMode::Normal
+        );
+        assert_eq!(
+            fitting_view(ListMode::Normal, Rect::new(0, 0, 80, 10)),
+            ListMode::Detailed
+        );
+        assert_eq!(
+            fitting_view(ListMode::Normal, Rect::new(0, 0, 40, 30)),
+            ListMode::Detailed
+        );
     }
 
     #[test]

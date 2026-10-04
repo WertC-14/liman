@@ -44,6 +44,10 @@ pub struct App {
     pub filter_editing: bool,
     /// One-line message for the status bar (cleared on the next key press).
     pub message: Option<String>,
+    /// View chosen by the user (`+` / `-`, Ctrl+wheel).
+    pub view: ListMode,
+    /// View actually drawn last frame; smaller than `view` when the terminal is too small. Written by the UI.
+    pub drawn_view: ListMode,
     /// Where the list was drawn last frame, for mouse hit-testing. Written by the UI.
     pub list_area: Rect,
     /// Where the sidebar was drawn last frame (empty when hidden). Written by the UI.
@@ -74,6 +78,8 @@ impl App {
             filter: String::new(),
             filter_editing: false,
             message: None,
+            view: ListMode::Detailed,
+            drawn_view: ListMode::Detailed,
             list_area: Rect::default(),
             sidebar_area: Rect::default(),
             path_bar_area: Rect::default(),
@@ -154,6 +160,9 @@ impl App {
             KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => self.go_up(),
             KeyCode::Char('/') => self.filter_editing = true,
             KeyCode::Char('~') => self.load(self.places.home.clone()),
+            // Ctrl variants arrive only in terminals that report them; plain keys always work.
+            KeyCode::Char('+' | '=') => self.zoom(1),
+            KeyCode::Char('-') => self.zoom(-1),
             _ => self.dirty = false,
         }
     }
@@ -185,7 +194,10 @@ impl App {
     // ---- mouse ----
 
     fn on_mouse(&mut self, mouse: MouseEvent) {
+        let ctrl = mouse.modifiers.contains(KeyModifiers::CONTROL);
         match mouse.kind {
+            MouseEventKind::ScrollUp if ctrl => self.zoom(1),
+            MouseEventKind::ScrollDown if ctrl => self.zoom(-1),
             MouseEventKind::ScrollDown => self.move_selection(WHEEL_STEP),
             MouseEventKind::ScrollUp => self.move_selection(-WHEEL_STEP),
             MouseEventKind::Down(MouseButton::Left) => self.on_click(mouse.column, mouse.row),
@@ -213,7 +225,7 @@ impl App {
         let Some(index) = FileList::row_at(
             self.list_area,
             self.table.offset(),
-            ListMode::Detailed,
+            self.drawn_view,
             column,
             row,
         ) else {
@@ -241,11 +253,23 @@ impl App {
         breadcrumb::segments(&self.cwd, &self.places.home)
     }
 
+    /// Entries that fit on one screen; at least one.
     fn page(&self) -> isize {
-        // Visible rows minus the header; at least one.
-        isize::try_from(self.list_area.height.saturating_sub(2))
-            .unwrap_or(1)
-            .max(1)
+        let rows = self
+            .list_area
+            .height
+            .saturating_sub(liman_widgets::file_list::HEADER_HEIGHT)
+            / self.drawn_view.row_height();
+        isize::try_from(rows).unwrap_or(1).max(1)
+    }
+
+    /// Steps between the views: Detailed (0) and Normal (1). Grid comes later (ROADMAP item 10).
+    fn zoom(&mut self, step: i8) {
+        self.view = match (self.view, step.signum()) {
+            (ListMode::Detailed, 1) => ListMode::Normal,
+            (ListMode::Normal, -1) => ListMode::Detailed,
+            (view, _) => view,
+        };
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -566,6 +590,35 @@ mod tests {
         app.handle(key(KeyCode::Char('~')));
         let generation = app.generation;
         assert_eq!(generation, 2);
+    }
+
+    #[test]
+    fn plus_minus_and_ctrl_wheel_switch_views() {
+        let (mut app, _rx) = app();
+        app.handle(key(KeyCode::Char('+')));
+        assert_eq!(app.view, ListMode::Normal);
+        app.handle(key(KeyCode::Char('+'))); // already the largest list view
+        assert_eq!(app.view, ListMode::Normal);
+        app.handle(key(KeyCode::Char('-')));
+        assert_eq!(app.view, ListMode::Detailed);
+
+        app.handle(AppEvent::Input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 30,
+            row: 5,
+            modifiers: KeyModifiers::CONTROL,
+        })));
+        assert_eq!(app.view, ListMode::Normal);
+        assert_eq!(selected_name(&app), "Music"); // Ctrl+wheel does not move the selection
+    }
+
+    #[test]
+    fn clicks_use_the_drawn_view() {
+        let (mut app, _rx) = app();
+        app.drawn_view = ListMode::Normal;
+        // list_area.y = 2, rows start at 4; entry 1 (Projects) spans rows 9..=12
+        app.handle(click(30, 10));
+        assert_eq!(selected_name(&app), "Projects");
     }
 
     #[test]
