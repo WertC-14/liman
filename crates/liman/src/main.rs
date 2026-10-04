@@ -32,6 +32,18 @@ fn main() -> io::Result<()> {
     if let Some(theme) = settings.get("theme") {
         liman_widgets::theme::set_by_name(theme);
     }
+    // `colors = truecolor | 256` in the config overrides the guess.
+    let env = |name| std::env::var(name).ok();
+    let truecolor = match settings.get("colors").map(String::as_str) {
+        Some("truecolor" | "24bit") => true,
+        Some("256") => false,
+        _ => liman_widgets::colors::detect_truecolor(
+            env("COLORTERM").as_deref(),
+            env("TERM").as_deref(),
+            env("TERM_PROGRAM").as_deref(),
+        ),
+    };
+    liman_widgets::colors::set_truecolor(truecolor);
     let mut app = App::new(cwd, Places::detect(&home), tx);
     app.apply_settings(&settings);
     while app.running {

@@ -31,6 +31,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     } else if app.help_open {
         render_help(frame);
     }
+    if !liman_widgets::colors::truecolor() {
+        liman_widgets::colors::downsample(frame.buffer_mut());
+    }
 }
 
 /// A centered box of `width` × `height` cells with a rounded accent frame; returns the inside.
