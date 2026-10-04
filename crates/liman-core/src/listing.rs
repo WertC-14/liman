@@ -44,6 +44,7 @@ pub fn entry_for(path: std::path::PathBuf, name: String, _opts: ListOptions) -> 
         // Counted later by `count_children` on a worker, so a folder with many subfolders (or a
         // slow mount) shows its list at once.
         item_count: None,
+        contents: None,
         modified: meta.and_then(|m| m.modified().ok()),
         name,
         path,
@@ -55,17 +56,69 @@ pub fn entry_for(path: std::path::PathBuf, name: String, _opts: ListOptions) -> 
 
 /// Number of (visible) children of `dir`: one `read_dir`, not recursive. `None` if unreadable.
 pub fn count_children(dir: &Path, opts: ListOptions) -> Option<usize> {
-    let iter = fs::read_dir(dir).ok()?;
-    Some(
-        iter.filter_map(Result::ok)
-            .filter(|e| opts.show_hidden || !e.file_name().to_string_lossy().starts_with('.'))
-            .count(),
-    )
+    folder_summary(dir, opts).map(|(count, _)| count)
+}
+
+/// Number of (visible) children and the type most of its files have, if one type is at least
+/// half of them (by extension, no extra reads). One `read_dir`, not recursive.
+pub fn folder_summary(dir: &Path, opts: ListOptions) -> Option<(usize, Option<FileType>)> {
+    let mut count = 0;
+    let mut files = 0;
+    let mut by_type: Vec<(FileType, usize)> = Vec::new();
+    for item in fs::read_dir(dir).ok()?.flatten() {
+        let name = item.file_name();
+        let name = name.to_string_lossy();
+        if !opts.show_hidden && name.starts_with('.') {
+            continue;
+        }
+        count += 1;
+        if item.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        files += 1;
+        let t = FileType::from_path(Path::new(name.as_ref()), false);
+        if t == FileType::Other {
+            continue;
+        }
+        match by_type.iter_mut().find(|(k, _)| *k == t) {
+            Some((_, n)) => *n += 1,
+            None => by_type.push((t, 1)),
+        }
+    }
+    let dominant = by_type
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .filter(|(_, n)| *n * 2 >= files)
+        .map(|(t, _)| t);
+    Some((count, dominant))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_summary_finds_the_main_file_type() {
+        let dir = tempdir("summary");
+        for name in ["a.md", "b.md", "c.png", "notes.txt"] {
+            fs::write(dir.join(name), "").unwrap();
+        }
+        fs::create_dir(dir.join("sub")).unwrap();
+        // 3 of 4 files are text (md, txt), the folder counts too: 5 items.
+        assert_eq!(
+            folder_summary(&dir, ListOptions::default()),
+            Some((5, Some(FileType::Text)))
+        );
+        fs::write(dir.join("d.rs"), "").unwrap();
+        fs::write(dir.join("e.rs"), "").unwrap();
+        fs::write(dir.join("f.rs"), "").unwrap();
+        // 3 text, 3 code, 1 image: no type has half of the files.
+        assert_eq!(
+            folder_summary(&dir, ListOptions::default()),
+            Some((8, None))
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn tempdir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("liman-test-{tag}-{}", std::process::id()));

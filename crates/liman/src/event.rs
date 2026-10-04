@@ -25,7 +25,8 @@ pub enum AppEvent {
     /// Children counts of folders in the listing `generation` (sent in batches).
     Counts {
         generation: u64,
-        counts: Vec<(PathBuf, Option<usize>)>,
+        /// Folder, its child count and the type most of its files have.
+        counts: Vec<(PathBuf, Option<usize>, Option<liman_core::FileType>)>,
     },
     /// The running job got further (bytes for copy/move, items for the rest).
     JobProgress {

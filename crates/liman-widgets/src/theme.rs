@@ -311,6 +311,24 @@ pub fn type_color(file_type: FileType) -> Color {
     palette().types[i]
 }
 
+/// The color an entry is drawn in. Files: their type's color. Folders: the type most of their
+/// files have (a "docs" folder of Markdown is text-colored), well-known folders their obvious type
+/// (Music, Pictures...), and the folder color otherwise.
+pub fn entry_color(entry: &liman_core::Entry) -> Color {
+    use liman_core::SpecialDir;
+    if !entry.is_dir {
+        return type_color(entry.file_type);
+    }
+    let by_place = match entry.special {
+        Some(SpecialDir::Music) => Some(FileType::Audio),
+        Some(SpecialDir::Pictures) => Some(FileType::Image),
+        Some(SpecialDir::Videos) => Some(FileType::Video),
+        Some(SpecialDir::Documents | SpecialDir::Templates) => Some(FileType::Document),
+        _ => None,
+    };
+    type_color(by_place.or(entry.contents).unwrap_or(FileType::Folder))
+}
+
 /// Dark or light text, whichever reads better on `bg`.
 pub fn text_on(bg: Color) -> Color {
     match bg {

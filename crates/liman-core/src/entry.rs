@@ -15,6 +15,9 @@ pub struct Entry {
     pub size: u64,
     /// Number of visible children for directories; `None` for files or unreadable directories.
     pub item_count: Option<usize>,
+    /// For folders: the file type most of the files inside have ("docs" full of Markdown → Text),
+    /// so the folder can wear that color. Filled in with `item_count`.
+    pub contents: Option<FileType>,
     pub modified: Option<SystemTime>,
     pub file_type: FileType,
     /// Set for well-known folders (Downloads, Music, ...); filled in by the app, not by `list_dir`.
@@ -52,6 +55,7 @@ mod tests {
             special: None,
             size: 0,
             item_count: None,
+            contents: None,
             modified: None,
             file_type: FileType::Other,
         }

@@ -19,6 +19,7 @@ fn main() {
                 is_symlink: false,
                 size: u64::from(i),
                 item_count: None,
+                contents: None,
                 modified: None,
                 file_type: FileType::Image,
                 special: None,

@@ -206,6 +206,7 @@ mod tests {
             special: None,
             size: 0,
             item_count: None,
+            contents: None,
             modified: None,
         }
     }

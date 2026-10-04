@@ -204,6 +204,7 @@ mod tests {
             special: None,
             size,
             item_count: None,
+            contents: None,
             modified: Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(age)),
         }
     }

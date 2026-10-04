@@ -42,8 +42,8 @@ pub fn spawn_counts(
             if current.load(std::sync::atomic::Ordering::Relaxed) != generation {
                 return;
             }
-            let count = liman_core::listing::count_children(&dir, opts);
-            batch.push((dir, count));
+            let summary = liman_core::listing::folder_summary(&dir, opts);
+            batch.push((dir, summary.map(|(n, _)| n), summary.and_then(|(_, t)| t)));
             if last.elapsed() >= COUNT_BATCH {
                 last = Instant::now();
                 let counts = std::mem::take(&mut batch);

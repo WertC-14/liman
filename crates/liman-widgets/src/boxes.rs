@@ -13,7 +13,6 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Text};
 
 use crate::badge;
-use crate::theme::type_color;
 
 pub const WIDTH: u16 = 10;
 pub const HEIGHT: u16 = 4;
@@ -59,7 +58,7 @@ pub fn render_sized(entry: &Entry, width: u16, height: u16) -> Text<'static> {
     }
     lines[label_at] = format!("│{label:^inner$}│");
     lines.push(format!("╰{}╯", "─".repeat(inner)));
-    let style = Style::new().fg(type_color(entry.file_type));
+    let style = Style::new().fg(crate::theme::entry_color(entry));
     Text::from(lines.into_iter().map(Line::from).collect::<Vec<_>>()).style(style)
 }
 
@@ -83,6 +82,7 @@ mod tests {
             special,
             size: 0,
             item_count: None,
+            contents: None,
             modified: None,
         }
     }

@@ -1395,18 +1395,23 @@ impl App {
     // ---- worker results ----
 
     /// Folder child counts arrived (after the listing): fill them in; a size sort uses them.
-    fn on_counts(&mut self, generation: u64, counts: Vec<(PathBuf, Option<usize>)>) {
+    fn on_counts(
+        &mut self,
+        generation: u64,
+        counts: Vec<(PathBuf, Option<usize>, Option<liman_core::FileType>)>,
+    ) {
         if generation != self.generation {
             return;
         }
         let Listing::Ready(entries) = &mut self.listing else {
             return;
         };
-        let counts: std::collections::HashMap<PathBuf, Option<usize>> =
-            counts.into_iter().collect();
+        let counts: std::collections::HashMap<PathBuf, _> =
+            counts.into_iter().map(|(p, n, t)| (p, (n, t))).collect();
         for entry in entries.iter_mut().filter(|e| e.is_dir) {
-            if let Some(count) = counts.get(&entry.path) {
+            if let Some((count, contents)) = counts.get(&entry.path) {
                 entry.item_count = *count;
+                entry.contents = *contents;
             }
         }
         if self.sort.key == liman_core::sort::SortKey::Size && self.results.is_none() {
@@ -1443,10 +1448,11 @@ impl App {
             }
         }
         // A reload of the same folder keeps the counts it had until the new ones arrive (no flicker).
-        let old_counts: std::collections::HashMap<PathBuf, usize> = match &self.listing {
+        type Known = (usize, Option<liman_core::FileType>);
+        let old_counts: std::collections::HashMap<PathBuf, Known> = match &self.listing {
             Listing::Ready(old) if path == self.cwd => old
                 .iter()
-                .filter_map(|e| Some((e.path.clone(), e.item_count?)))
+                .filter_map(|e| Some((e.path.clone(), (e.item_count?, e.contents))))
                 .collect(),
             _ => Default::default(),
         };
@@ -1455,7 +1461,10 @@ impl App {
             Ok(mut entries) => {
                 for entry in entries.iter_mut().filter(|e| e.is_dir) {
                     entry.special = self.places.kind_of(&entry.path);
-                    entry.item_count = old_counts.get(&entry.path).copied();
+                    if let Some((count, contents)) = old_counts.get(&entry.path) {
+                        entry.item_count = Some(*count);
+                        entry.contents = *contents;
+                    }
                 }
                 // Folders come sorted by name; results keep the command's order.
                 if self.results_pending.is_none()
@@ -1551,6 +1560,7 @@ mod tests {
             special: None,
             size: 0,
             item_count: None,
+            contents: None,
             modified: None,
         }
     }

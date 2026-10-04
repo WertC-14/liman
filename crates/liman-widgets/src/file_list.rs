@@ -26,9 +26,10 @@ use crate::rows::Rows;
 use crate::theme;
 
 const COLUMN_SPACING: u16 = 2;
+/// Detailed view: Type (with the git letters in front) first, then Name, Size, Modified.
 const DETAILED_WIDTHS: [Constraint; 4] = [
+    Constraint::Length(17),
     Constraint::Fill(1),
-    Constraint::Length(14),
     Constraint::Length(12),
     Constraint::Length(16),
 ];
@@ -107,8 +108,8 @@ impl<'a> FileList<'a> {
             .iter()
             .position(|r| column >= r.x && column < r.right())?;
         [
-            SortKey::Name,
             SortKey::Type,
+            SortKey::Name,
             SortKey::Size,
             SortKey::Modified,
         ]
@@ -146,7 +147,8 @@ impl<'a> FileList<'a> {
     fn row(&self, entry: &Entry) -> Row<'static> {
         let is_marked = self.marked.is_some_and(|m| m.contains(&entry.path));
         let mut name = Vec::new();
-        if let Some(marks) = self.git {
+        // Detailed: git letters live in the Type column; Normal has no Type column.
+        if let (Some(marks), ListMode::Normal) = (self.git, self.mode) {
             name.extend(gitmark::spans(marks.get(&entry.path).copied()));
         }
         if is_marked {
@@ -158,7 +160,7 @@ impl<'a> FileList<'a> {
         }
         // Folders stand out by their name (bold, folder color), not by an icon column.
         let name = if entry.is_dir {
-            Line::from(name).fg(theme::accent()).bold()
+            Line::from(name).fg(theme::entry_color(entry)).bold()
         } else {
             Line::from(name).fg(theme::fg())
         };
@@ -170,8 +172,8 @@ impl<'a> FileList<'a> {
             .fg(theme::dim());
         let row = match self.mode {
             ListMode::Detailed => Row::new([
+                Cell::from(self.type_cell(entry)),
                 Cell::from(name),
-                Cell::from(Line::from(type_text(entry)).fg(theme::dim())),
                 Cell::from(size),
                 Cell::from(modified),
             ]),
@@ -189,6 +191,16 @@ impl<'a> FileList<'a> {
         } else {
             row
         }
+    }
+
+    /// `M  MD file`: git letters (inside a repository) and the type in its color.
+    fn type_cell(&self, entry: &Entry) -> Line<'static> {
+        let mut spans = Vec::new();
+        if let Some(marks) = self.git {
+            spans.extend(gitmark::spans(marks.get(&entry.path).copied()));
+        }
+        spans.push(Span::raw(type_text(entry)).fg(theme::entry_color(entry)));
+        Line::from(spans)
     }
 
     fn modified_text(&self, entry: &Entry) -> String {
@@ -220,8 +232,8 @@ impl StatefulWidget for FileList<'_> {
             // Detailed: no icon column, the type is written out (Folder, PDF file, ...).
             ListMode::Detailed => (
                 Row::new([
-                    Cell::from(title(tr("Name"), SortKey::Name)),
                     Cell::from(title(tr("Type"), SortKey::Type)),
+                    Cell::from(title(tr("Name"), SortKey::Name)),
                     size,
                     modified,
                 ]),
@@ -285,17 +297,17 @@ mod window_tests {
     #[test]
     fn header_click_finds_the_sort_column() {
         let area = Rect::new(0, 0, 100, 10);
-        // widths: Fill(1)=52, 12, 12, 16 with spacing 2 -> Name 0..52, Type 54..66, Size 68..80, Modified 82..98
+        // widths: 17, Fill(1)=49, 12, 16 with spacing 2 -> Type 0..17, Name 19..68, Size 70..82, Modified 84..100
         assert_eq!(
             FileList::sort_key_at(area, ListMode::Detailed, 3, 0),
-            Some(SortKey::Name)
-        );
-        assert_eq!(
-            FileList::sort_key_at(area, ListMode::Detailed, 60, 0),
             Some(SortKey::Type)
         );
         assert_eq!(
-            FileList::sort_key_at(area, ListMode::Detailed, 70, 0),
+            FileList::sort_key_at(area, ListMode::Detailed, 30, 0),
+            Some(SortKey::Name)
+        );
+        assert_eq!(
+            FileList::sort_key_at(area, ListMode::Detailed, 75, 0),
             Some(SortKey::Size)
         );
         assert_eq!(
@@ -380,6 +392,7 @@ mod tests {
             special: None,
             size,
             item_count: items,
+            contents: None,
             modified: None,
             file_type: FileType::from_path(&PathBuf::from(name), is_dir),
         }

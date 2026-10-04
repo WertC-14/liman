@@ -5,7 +5,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 
 use crate::symbols;
-use crate::theme::type_color;
 
 /// Badge width in cells, including padding.
 pub const WIDTH: u16 = 6;
@@ -32,7 +31,7 @@ pub fn badge(entry: &Entry) -> Span<'static> {
     Span::styled(
         text,
         Style::new()
-            .fg(type_color(entry.file_type))
+            .fg(crate::theme::entry_color(entry))
             .add_modifier(Modifier::BOLD),
     )
 }
@@ -52,6 +51,7 @@ mod tests {
             special: None,
             size: 0,
             item_count: None,
+            contents: None,
             modified: None,
             file_type: FileType::from_path(&PathBuf::from(name), is_dir),
         }

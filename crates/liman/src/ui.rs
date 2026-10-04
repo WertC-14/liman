@@ -1032,6 +1032,7 @@ mod tests {
             special: None,
             size: 13_800,
             item_count: None,
+            contents: None,
             modified: None,
             file_type: FileType::Code,
         }]);
