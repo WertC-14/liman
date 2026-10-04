@@ -6,8 +6,10 @@ pub mod entry;
 pub mod file_type;
 pub mod format;
 pub mod listing;
+pub mod ops;
 pub mod places;
 pub mod sort;
+pub mod trash;
 
 pub use entry::Entry;
 pub use file_type::FileType;
