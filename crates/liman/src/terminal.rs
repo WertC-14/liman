@@ -9,8 +9,6 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -112,17 +110,16 @@ impl Terminal {
 
         let mut reader = pair.master.try_clone_reader().map_err(anyhow_lite::from)?;
         let writer = pair.master.take_writer().map_err(anyhow_lite::from)?;
-        let started = Instant::now();
-        let last_output = Arc::new(AtomicU64::new(0)); // ms since `started`
+        // The reader pings the quiet watcher after every chunk of output.
+        let (ping, pings) = std::sync::mpsc::channel::<()>();
         let reader_tx = tx.clone();
-        let reader_last = last_output.clone();
         thread::spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        reader_last.store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
+                        let _ = ping.send(());
                         if reader_tx
                             .send(AppEvent::TermOutput(buf[..n].to_vec()))
                             .is_err()
@@ -136,17 +133,19 @@ impl Terminal {
         });
         // Quiet watcher: each burst of output followed by QUIET silence is reported once.
         // Used to clear the start-up greeting and to notice that a command has finished.
+        // It sleeps in `recv` while the shell is idle and ends when the reader does.
         thread::spawn(move || {
-            let mut reported = 0;
-            loop {
-                thread::sleep(Duration::from_millis(50));
-                let last = last_output.load(Ordering::Relaxed);
-                let now = started.elapsed().as_millis() as u64;
-                if last > reported && now - last >= QUIET.as_millis() as u64 {
-                    reported = last;
-                    if tx.send(AppEvent::TermQuiet).is_err() {
-                        return;
+            use std::sync::mpsc::RecvTimeoutError;
+            while pings.recv().is_ok() {
+                loop {
+                    match pings.recv_timeout(QUIET) {
+                        Ok(()) => continue, // still talking
+                        Err(RecvTimeoutError::Timeout) => break,
+                        Err(RecvTimeoutError::Disconnected) => return,
                     }
+                }
+                if tx.send(AppEvent::TermQuiet).is_err() {
+                    return;
                 }
             }
         });

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use liman_core::Entry;
 use liman_core::job::Outcome;
@@ -29,12 +29,12 @@ pub enum AppEvent {
     JobFinished(Outcome),
     /// Bytes the embedded shell wrote.
     TermOutput(Vec<u8>),
-    /// `git status` finished for the repository around `dir`.
     /// A preview finished building (F3 panel).
     Preview {
         key: crate::app::PreviewKey,
         preview: Box<liman_core::preview::Preview>,
     },
+    /// `git status` finished for the repository around `dir`.
     Git {
         dir: PathBuf,
         status: Option<liman_core::git::GitStatus>,
@@ -52,27 +52,63 @@ pub enum AppEvent {
     TermQuiet,
 }
 
-/// How long the input thread waits for input before checking the pause flag again.
-pub const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Input poll timeout right after the user did something: a pause request is noticed quickly.
+const ACTIVE_POLL: Duration = Duration::from_millis(50);
+/// Poll timeout when the user has been idle for [`ACTIVE_FOR`]: one wake-up a second.
+const IDLE_POLL: Duration = Duration::from_secs(1);
+const ACTIVE_FOR: Duration = Duration::from_secs(2);
+
+/// Lets the main thread take stdin away from the input thread (for `$EDITOR`).
+#[derive(Default)]
+pub struct InputGate {
+    paused: AtomicBool,
+    /// Set by the input thread once it has seen `paused` and stopped reading.
+    parked: AtomicBool,
+}
+
+impl InputGate {
+    /// Stops the input thread and waits until it no longer reads stdin. A pause always follows
+    /// a key or click, so the thread is in its fast poll and parks within ~50 ms.
+    pub fn pause(&self) {
+        self.parked.store(false, Ordering::Release);
+        self.paused.store(true, Ordering::Release);
+        let start = Instant::now();
+        while !self.parked.load(Ordering::Acquire) && start.elapsed() < IDLE_POLL * 2 {
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    pub fn resume(&self) {
+        self.paused.store(false, Ordering::Release);
+    }
+}
 
 /// Reads terminal input on its own thread so the main loop never blocks on stdin.
 ///
-/// While `paused` is set the thread does not touch stdin, so an external program
-/// (e.g. `$EDITOR`) gets every key. Polling with a timeout makes the flag take effect
-/// within [`POLL_INTERVAL`].
-pub fn spawn_input_thread(tx: Sender<AppEvent>, paused: Arc<AtomicBool>) {
+/// The poll timeout only bounds how fast a pause is noticed: short while the user is active,
+/// long when idle, so an idle liman wakes about once a second.
+pub fn spawn_input_thread(tx: Sender<AppEvent>, gate: Arc<InputGate>) {
     thread::spawn(move || {
+        let mut last_input = Instant::now();
         loop {
-            if paused.load(Ordering::Acquire) {
-                thread::sleep(POLL_INTERVAL);
+            if gate.paused.load(Ordering::Acquire) {
+                gate.parked.store(true, Ordering::Release);
+                thread::sleep(ACTIVE_POLL);
+                last_input = Instant::now();
                 continue;
             }
-            match event::poll(POLL_INTERVAL) {
+            let timeout = if last_input.elapsed() < ACTIVE_FOR {
+                ACTIVE_POLL
+            } else {
+                IDLE_POLL
+            };
+            match event::poll(timeout) {
                 Ok(false) => continue,
                 Ok(true) => {}
                 Err(_) => break,
             }
             let Ok(ev) = event::read() else { break };
+            last_input = Instant::now();
             if tx.send(AppEvent::Input(ev)).is_err() {
                 break; // main loop is gone
             }
