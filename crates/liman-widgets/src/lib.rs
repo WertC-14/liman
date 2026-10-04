@@ -6,9 +6,11 @@ pub mod badge;
 pub mod boxes;
 pub mod breadcrumb;
 pub mod file_list;
+pub mod grid;
 pub mod sidebar;
 pub mod symbols;
 pub mod theme;
 
 pub use file_list::{FileList, ListMode};
+pub use grid::GridView;
 pub use sidebar::Sidebar;
