@@ -178,12 +178,82 @@ impl StatefulWidget for FileList<'_> {
             ),
         };
         let header = header.style(Style::new().fg(theme::dim())).bottom_margin(1);
-        let rows: Vec<_> = self.entries.iter().map(|e| self.row(e)).collect();
+        // Only the rows on screen are built (a folder with 20 000 files cost 100 ms per frame when
+        // every row was built). We keep the scroll offset ourselves and hand `Table` just the window.
+        let (start, end) = visible_window(state, self.entries.len(), area, self.mode);
+        let rows: Vec<_> = self.entries[start..end]
+            .iter()
+            .map(|e| self.row(e))
+            .collect();
+        let mut window = TableState::default().with_selected(state.selected().map(|s| s - start));
         let table = Table::new(rows, widths)
             .header(header)
             .column_spacing(2)
             .row_highlight_style(Style::new().bg(theme::selected_bg()));
-        StatefulWidget::render(table, area, buf, state);
+        StatefulWidget::render(table, area, buf, &mut window);
+    }
+}
+
+/// The range of entries shown in `area`, scrolled so the selection is visible. Updates the
+/// offset in `state` (first shown entry), which hit-testing and the next frame use.
+fn visible_window(
+    state: &mut TableState,
+    len: usize,
+    area: Rect,
+    mode: ListMode,
+) -> (usize, usize) {
+    let capacity =
+        usize::from((area.height.saturating_sub(HEADER_HEIGHT) / mode.row_height()).max(1));
+    let mut offset = state.offset();
+    if let Some(selected) = state.selected() {
+        if selected < offset {
+            offset = selected;
+        } else if selected >= offset + capacity {
+            offset = selected + 1 - capacity;
+        }
+    }
+    // Do not leave empty space below the last entry when there is enough to fill it.
+    offset = offset.min(len.saturating_sub(capacity));
+    *state.offset_mut() = offset;
+    (offset, (offset + capacity).min(len))
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn window_follows_the_selection_and_fills_the_screen() {
+        let area = Rect::new(0, 0, 80, 12); // 10 rows after the header
+        let mut state = TableState::default().with_selected(Some(0));
+        assert_eq!(
+            visible_window(&mut state, 100, area, ListMode::Detailed),
+            (0, 10)
+        );
+        state.select(Some(25));
+        assert_eq!(
+            visible_window(&mut state, 100, area, ListMode::Detailed),
+            (16, 26)
+        );
+        state.select(Some(20));
+        assert_eq!(
+            visible_window(&mut state, 100, area, ListMode::Detailed),
+            (16, 26)
+        );
+        state.select(Some(99));
+        assert_eq!(
+            visible_window(&mut state, 100, area, ListMode::Detailed),
+            (90, 100)
+        );
+        state.select(Some(3));
+        assert_eq!(
+            visible_window(&mut state, 5, area, ListMode::Detailed),
+            (0, 5)
+        );
+        assert_eq!(
+            visible_window(&mut state, 0, area, ListMode::Detailed),
+            (0, 0)
+        );
     }
 }
 
