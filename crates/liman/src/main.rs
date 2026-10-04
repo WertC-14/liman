@@ -32,6 +32,7 @@ fn main() -> io::Result<()> {
         liman_widgets::theme::set_by_name(theme);
     }
     let mut app = App::new(cwd, Places::detect(&home), tx);
+    app.apply_settings(&settings);
     while app.running {
         // Draw only when something changed (dirty flag), never on a fixed tick.
         if app.dirty {

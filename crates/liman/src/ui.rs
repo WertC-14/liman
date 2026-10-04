@@ -80,6 +80,8 @@ fn render_help(frame: &mut Frame) {
         ("v", "small list ↔ large view"),
         ("+ / -  (Ctrl+wheel)", "zoom"),
         ("/", "filter"),
+        ("Ctrl+H / .", "hidden files"),
+        ("s / S  (header click)", "sort by / reverse"),
         ("Space / Ctrl+A", "mark / mark all"),
         ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
         ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
@@ -236,7 +238,9 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
             let rows: Vec<_> = app.visible.iter().map(|&i| &entries[i]).collect();
             match app.drawn_view.list_mode() {
                 Some(mode) => frame.render_stateful_widget(
-                    FileList::new(&rows, format::now(), mode).marked(&app.marked),
+                    FileList::new(&rows, format::now(), mode)
+                        .marked(&app.marked)
+                        .sort(app.sort),
                     area,
                     &mut app.table,
                 ),

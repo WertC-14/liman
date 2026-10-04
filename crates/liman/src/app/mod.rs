@@ -85,6 +85,8 @@ pub struct App {
     pub table: TableState,
     /// Case-insensitive substring filter typed after `/`.
     pub filter: String,
+    /// Order of folder listings (`s` / `S` / header click); saved in the config.
+    pub sort: liman_core::sort::SortOrder,
     /// Lower-case entry names, made once per listing for the filter.
     names_lower: Vec<String>,
     /// The (lower-case) filter `visible` was computed for.
@@ -172,6 +174,7 @@ impl App {
             table: TableState::default(),
             filter: String::new(),
             names_lower: Vec::new(),
+            sort: liman_core::sort::SortOrder::default(),
             visible_for: String::new(),
             filter_editing: false,
             message: None,
@@ -356,6 +359,8 @@ impl App {
             KeyCode::Esc if !self.filter.is_empty() => self.set_filter(String::new()),
             KeyCode::Esc if self.results.is_some() => self.go_up(),
             KeyCode::Esc => self.marked.clear(),
+            KeyCode::Char('h') if ctrl => self.toggle_hidden(),
+            KeyCode::Char('.') => self.toggle_hidden(),
             // In the grid, left/right move between tiles and up/down jump a row (like Nautilus).
             KeyCode::Right | KeyCode::Char('l') if self.drawn_view == View::Grid => {
                 self.move_selection(1)
@@ -374,6 +379,20 @@ impl App {
             KeyCode::Char('/') => self.filter_editing = true,
             KeyCode::Char('~') => self.load(self.places.home.clone()),
             KeyCode::Char('v') => self.toggle_compact(),
+            KeyCode::Char('s') => {
+                let order = liman_core::sort::SortOrder {
+                    key: self.sort.key.next(),
+                    descending: false,
+                };
+                self.set_sort(order);
+            }
+            KeyCode::Char('S') => {
+                let order = liman_core::sort::SortOrder {
+                    descending: !self.sort.descending,
+                    ..self.sort
+                };
+                self.set_sort(order);
+            }
             KeyCode::Char('t') => self.open_theme_picker(),
             KeyCode::Char('?') => self.help_open = true,
             // Ctrl variants arrive only in terminals that report them; plain keys always work.
@@ -479,6 +498,13 @@ impl App {
                 }
             }
             return;
+        }
+        if self.drawn_view == View::Detailed
+            && let Some(key) =
+                FileList::sort_key_at(self.list_area, ListMode::Detailed, column, row)
+        {
+            let descending = key == self.sort.key && !self.sort.descending;
+            return self.set_sort(liman_core::sort::SortOrder { key, descending });
         }
         let hit = match self.drawn_view.list_mode() {
             Some(mode) => FileList::row_at(self.list_area, self.table.offset(), mode, column, row),
@@ -591,11 +617,77 @@ impl App {
     fn save_theme(&mut self) {
         self.theme_picker = None;
         let name = liman_widgets::theme::palette().name;
+        self.save_setting("theme", name);
+        self.message = Some(format!("Theme: {name}"));
+    }
+
+    /// Settings from the config file (theme is applied earlier, in `main`).
+    pub fn apply_settings(&mut self, settings: &std::collections::BTreeMap<String, String>) {
+        if let Some(order) = settings
+            .get("sort")
+            .and_then(|s| liman_core::sort::SortOrder::from_config(s))
+        {
+            self.sort = order;
+        }
+        if settings.get("hidden").is_some_and(|v| v == "true") && !self.options.show_hidden {
+            self.options.show_hidden = true;
+            self.load(self.cwd.clone());
+        }
+    }
+
+    fn save_setting(&mut self, key: &str, value: &str) {
+        if cfg!(test) {
+            return; // never touch the real config from tests
+        }
         let file = liman_core::config::path(&self.places.home);
-        self.message = Some(match liman_core::config::set(&file, "theme", name) {
-            Ok(()) => format!("Theme: {name}"),
-            Err(e) => format!("Theme: {name} (not saved: {e})"),
-        });
+        if let Err(e) = liman_core::config::set(&file, key, value) {
+            self.message = Some(format!("Setting not saved: {e}"));
+        }
+    }
+
+    /// Ctrl+H: show or hide dot files (reloads, keeps the selection).
+    fn toggle_hidden(&mut self) {
+        self.options.show_hidden = !self.options.show_hidden;
+        let value = if self.options.show_hidden {
+            "true"
+        } else {
+            "false"
+        };
+        self.save_setting("hidden", value);
+        self.message = Some(
+            if self.options.show_hidden {
+                "Showing hidden files"
+            } else {
+                "Hiding hidden files"
+            }
+            .into(),
+        );
+        self.select_after_load = self.selected_entry().map(|e| e.name.clone());
+        if self.results.is_none() {
+            self.load(self.cwd.clone());
+        }
+    }
+
+    /// Re-sorts the listing in place (no reload) and keeps the selected entry selected.
+    fn set_sort(&mut self, order: liman_core::sort::SortOrder) {
+        self.sort = order;
+        self.save_setting("sort", &order.to_config());
+        let keep = self.selected_entry().map(|e| e.path.clone());
+        if let Listing::Ready(entries) = &mut self.listing {
+            liman_core::sort::sort_with(entries, order);
+        }
+        self.names_lower.clear();
+        self.visible_for.clear();
+        self.refresh_visible();
+        let row = keep
+            .and_then(|p| self.visible_entries().iter().position(|e| e.path == p))
+            .unwrap_or(0);
+        self.select_row(row);
+        self.message = Some(format!(
+            "Sorted by {}{}",
+            order.key.name(),
+            if order.descending { ", descending" } else { "" }
+        ));
     }
 
     /// `v`: one key between the compact list (like cardea) and the large view last used.
@@ -783,6 +875,12 @@ impl App {
             Ok(mut entries) => {
                 for entry in entries.iter_mut().filter(|e| e.is_dir) {
                     entry.special = self.places.kind_of(&entry.path);
+                }
+                // Folders come sorted by name; results keep the command's order.
+                if self.results_pending.is_none()
+                    && self.sort != liman_core::sort::SortOrder::default()
+                {
+                    liman_core::sort::sort_with(&mut entries, self.sort);
                 }
                 Listing::Ready(entries)
             }
@@ -1134,6 +1232,37 @@ mod tests {
         app.handle(key(KeyCode::Esc));
         assert_eq!(liman_widgets::theme::current_index(), before);
         assert!(app.theme_picker.is_none());
+    }
+
+    #[test]
+    fn ctrl_h_toggles_hidden_files() {
+        let (mut app, _rx) = app();
+        let ctrl_h = AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Char('h'),
+            KeyModifiers::CONTROL,
+        )));
+        app.places.home = std::env::temp_dir().join("liman-test-no-config"); // keep the real config untouched
+        app.handle(ctrl_h);
+        assert!(app.options.show_hidden);
+        assert!(matches!(app.listing, Listing::Loading));
+    }
+
+    #[test]
+    fn s_sorts_in_place_and_keeps_the_selection() {
+        let (mut app, _rx) = app();
+        app.sort.key = liman_core::sort::SortKey::Modified; // so 's' goes to Type next
+        app.handle(key(KeyCode::Char('G'))); // c.rs
+        app.set_sort(liman_core::sort::SortOrder {
+            key: liman_core::sort::SortKey::Type,
+            descending: true,
+        });
+        let names: Vec<_> = app
+            .visible_entries()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        assert_eq!(names, ["Music", "Projects", "a.txt", "c.rs", "b.pdf"]);
+        assert_eq!(selected_name(&app), "c.rs");
     }
 
     #[test]

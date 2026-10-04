@@ -11,14 +11,23 @@ use std::path::PathBuf;
 
 use liman_core::Entry;
 use liman_core::format::{self, Timestamp};
+use liman_core::sort::{SortKey, SortOrder};
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 
 use crate::boxes;
 use crate::theme;
+
+const COLUMN_SPACING: u16 = 2;
+const DETAILED_WIDTHS: [Constraint; 4] = [
+    Constraint::Fill(1),
+    Constraint::Length(12),
+    Constraint::Length(12),
+    Constraint::Length(16),
+];
 
 /// Rows taken by the header line and the blank line under it.
 pub const HEADER_HEIGHT: u16 = 2;
@@ -51,6 +60,7 @@ pub struct FileList<'a> {
     now: Timestamp,
     mode: ListMode,
     marked: Option<&'a HashSet<PathBuf>>,
+    sort: Option<SortOrder>,
 }
 
 impl<'a> FileList<'a> {
@@ -61,7 +71,37 @@ impl<'a> FileList<'a> {
             now,
             mode,
             marked: None,
+            sort: None,
         }
+    }
+
+    /// Shows ▲/▼ next to the sorted column in the header.
+    pub fn sort(mut self, order: SortOrder) -> Self {
+        self.sort = Some(order);
+        self
+    }
+
+    /// Detailed view: the sort key of the header column under `column` (header row only).
+    pub fn sort_key_at(area: Rect, mode: ListMode, column: u16, row: u16) -> Option<SortKey> {
+        if mode != ListMode::Detailed || row != area.y || column < area.x || column >= area.right()
+        {
+            return None;
+        }
+        let rects = Layout::horizontal(DETAILED_WIDTHS)
+            .flex(Flex::Start)
+            .spacing(COLUMN_SPACING)
+            .split(Rect::new(area.x, 0, area.width, 1));
+        let i = rects
+            .iter()
+            .position(|r| column >= r.x && column < r.right())?;
+        [
+            SortKey::Name,
+            SortKey::Type,
+            SortKey::Size,
+            SortKey::Modified,
+        ]
+        .get(i)
+        .copied()
     }
 
     /// Entries whose path is in `marked` get a check mark and a tinted background.
@@ -154,18 +194,22 @@ impl StatefulWidget for FileList<'_> {
     type State = TableState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut TableState) {
-        let size = Cell::from(Line::from("Size").right_aligned());
-        let modified = Cell::from(Line::from("Modified").right_aligned());
+        let title = |text: &str, key: SortKey| match self.sort {
+            Some(o) if o.key == key => format!("{text} {}", if o.descending { "▼" } else { "▲" }),
+            _ => text.to_string(),
+        };
+        let size = Cell::from(Line::from(title("Size", SortKey::Size)).right_aligned());
+        let modified = Cell::from(Line::from(title("Modified", SortKey::Modified)).right_aligned());
         let (header, widths) = match self.mode {
             // Detailed: no icon column, the type is written out (Folder, PDF file, ...).
             ListMode::Detailed => (
-                Row::new([Cell::from("Name"), Cell::from("Type"), size, modified]),
-                [
-                    Constraint::Fill(1),
-                    Constraint::Length(12),
-                    Constraint::Length(10),
-                    Constraint::Length(16),
-                ],
+                Row::new([
+                    Cell::from(title("Name", SortKey::Name)),
+                    Cell::from(title("Type", SortKey::Type)),
+                    size,
+                    modified,
+                ]),
+                DETAILED_WIDTHS,
             ),
             ListMode::Normal => (
                 Row::new([Cell::from(""), Cell::from("Name"), size, modified]),
@@ -188,7 +232,7 @@ impl StatefulWidget for FileList<'_> {
         let mut window = TableState::default().with_selected(state.selected().map(|s| s - start));
         let table = Table::new(rows, widths)
             .header(header)
-            .column_spacing(2)
+            .column_spacing(COLUMN_SPACING)
             .row_highlight_style(Style::new().bg(theme::selected_bg()));
         StatefulWidget::render(table, area, buf, &mut window);
     }
@@ -221,6 +265,30 @@ fn visible_window(
 #[cfg(test)]
 mod window_tests {
     use super::*;
+
+    #[test]
+    fn header_click_finds_the_sort_column() {
+        let area = Rect::new(0, 0, 100, 10);
+        // widths: Fill(1)=52, 12, 12, 16 with spacing 2 -> Name 0..52, Type 54..66, Size 68..80, Modified 82..98
+        assert_eq!(
+            FileList::sort_key_at(area, ListMode::Detailed, 3, 0),
+            Some(SortKey::Name)
+        );
+        assert_eq!(
+            FileList::sort_key_at(area, ListMode::Detailed, 60, 0),
+            Some(SortKey::Type)
+        );
+        assert_eq!(
+            FileList::sort_key_at(area, ListMode::Detailed, 70, 0),
+            Some(SortKey::Size)
+        );
+        assert_eq!(
+            FileList::sort_key_at(area, ListMode::Detailed, 90, 0),
+            Some(SortKey::Modified)
+        );
+        assert_eq!(FileList::sort_key_at(area, ListMode::Detailed, 90, 1), None);
+        assert_eq!(FileList::sort_key_at(area, ListMode::Normal, 3, 0), None);
+    }
 
     #[test]
     fn window_follows_the_selection_and_fills_the_screen() {
