@@ -15,7 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{StatefulWidget, TableState, Widget};
 
 use crate::boxes;
-use crate::theme::{BG, DIM, FG, MARKED_BG, SELECTED_BG};
+use crate::theme;
 
 /// Box sizes (width, height in cells) for the zoom levels, smallest first.
 pub const BOX_SIZES: [(u16, u16); 4] = [(12, 5), (16, 7), (20, 9), (26, 11)];
@@ -139,9 +139,9 @@ impl GridView<'_> {
     ) {
         let (box_w, box_h) = BOX_SIZES[self.level];
         let bg = match (selected, marked) {
-            (true, _) => SELECTED_BG,
-            (false, true) => MARKED_BG,
-            _ => BG,
+            (true, _) => theme::selected_bg(),
+            (false, true) => theme::marked_bg(),
+            _ => theme::bg(),
         };
         buf.set_style(tile, Style::new().bg(bg));
 
@@ -157,10 +157,14 @@ impl GridView<'_> {
         if marked {
             name = format!("✓ {name}");
         }
-        let color = if bg == BG { FG } else { Color::White };
+        let color = if bg == theme::bg() {
+            theme::fg()
+        } else {
+            Color::White
+        };
         let mut spans = vec![Span::styled(name, Style::new().fg(color))];
         if entry.is_symlink {
-            spans.push(Span::styled(" ↗", Style::new().fg(DIM)));
+            spans.push(Span::styled(" ↗", Style::new().fg(theme::dim())));
         }
         Line::from(spans).centered().render(name_area, buf);
     }
@@ -219,8 +223,8 @@ mod tests {
         assert!(row(&buf, 9).contains("RS")); // third entry on the second tile row
         // Inside of a box is empty (hollow), the selected tile is tinted.
         assert_eq!(buf[(22, 1)].symbol(), " ");
-        assert_eq!(buf[(22, 1)].bg, SELECTED_BG);
-        assert_eq!(buf[(6, 1)].bg, BG);
+        assert_eq!(buf[(22, 1)].bg, theme::selected_bg());
+        assert_eq!(buf[(6, 1)].bg, theme::bg());
     }
 
     #[test]

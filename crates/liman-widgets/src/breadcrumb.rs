@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 
-use crate::theme::{BAR_BG, DIM, FG, SELECTED_BG};
+use crate::theme;
 
 const SEPARATOR: &str = " › ";
 
@@ -44,14 +44,14 @@ pub fn line(segments: &[Segment]) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
     for (i, seg) in segments.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::raw(SEPARATOR).fg(DIM));
+            spans.push(Span::raw(SEPARATOR).fg(theme::dim()));
         }
         let last = i + 1 == segments.len();
         let chip = Span::raw(format!(" {} ", seg.label));
         spans.push(if last {
-            chip.fg(FG).bg(SELECTED_BG).bold()
+            chip.fg(theme::fg()).bg(theme::selected_bg()).bold()
         } else {
-            chip.fg(DIM).bg(BAR_BG)
+            chip.fg(theme::dim()).bg(theme::bar_bg())
         });
     }
     Line::from(spans)

@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::symbols;
-use crate::theme::{DIM, FG, SELECTED_BG, type_color};
+use crate::theme::{self, type_color};
 
 pub const WIDTH: u16 = 22;
 
@@ -58,10 +58,14 @@ impl Widget for Sidebar<'_> {
                 let line = Line::from(vec![
                     Span::raw(marker).fg(folder),
                     Span::raw(format!("{} ", symbols::special_dir(place.kind))).fg(folder),
-                    Span::raw(place.name.as_str()).fg(if active || cursor { FG } else { DIM }),
+                    Span::raw(place.name.as_str()).fg(if active || cursor {
+                        theme::fg()
+                    } else {
+                        theme::dim()
+                    }),
                 ]);
                 match (cursor, active) {
-                    (true, _) => line.style(Style::new().bg(SELECTED_BG)).bold(),
+                    (true, _) => line.style(Style::new().bg(theme::selected_bg())).bold(),
                     (false, true) => line.bold(),
                     _ => line,
                 }
@@ -118,7 +122,7 @@ mod tests {
         Sidebar::new(&places, Path::new("/home/u"))
             .focused(1)
             .render(area, &mut buf);
-        assert_eq!(buf[(10, 1)].bg, SELECTED_BG); // keyboard cursor
+        assert_eq!(buf[(10, 1)].bg, theme::selected_bg()); // keyboard cursor
         assert_eq!(buf[(0, 1)].symbol(), "▌");
     }
 }

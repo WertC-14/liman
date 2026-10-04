@@ -27,6 +27,10 @@ fn main() -> io::Result<()> {
 
     let cwd = std::env::current_dir()?;
     let home = std::env::var_os("HOME").map_or_else(|| cwd.clone(), PathBuf::from);
+    let settings = liman_core::config::load(&liman_core::config::path(&home));
+    if let Some(theme) = settings.get("theme") {
+        liman_widgets::theme::set_by_name(theme);
+    }
     let mut app = App::new(cwd, Places::detect(&home), tx);
     while app.running {
         // Draw only when something changed (dirty flag), never on a fixed tick.

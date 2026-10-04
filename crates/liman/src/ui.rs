@@ -2,7 +2,7 @@
 //! ratatui then sends only the cells that changed since the previous frame.
 
 use liman_core::format;
-use liman_widgets::theme::{BAR_BG, BG, DIM, FG};
+use liman_widgets::theme;
 use liman_widgets::{FileList, GridView, ListMode, Sidebar, breadcrumb, file_list, grid, sidebar};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
@@ -24,7 +24,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     ])
     .areas(frame.area());
 
-    frame.render_widget(Block::new().style(Style::new().bg(BG)), frame.area());
+    frame.render_widget(
+        Block::new().style(Style::new().bg(theme::bg())),
+        frame.area(),
+    );
 
     if app.term_mode == TermMode::Fullscreen {
         render_terminal(frame, app, top.union(body));
@@ -87,17 +90,14 @@ fn panel(title: &str, focused: bool) -> Block<'static> {
     let accent = liman_widgets::theme::type_color(liman_core::FileType::Folder);
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(if focused { accent } else { BAR_BG_BORDER }))
+        .border_style(Style::new().fg(if focused { accent } else { theme::border() }))
         .title(
             Span::raw(title.to_string())
-                .fg(if focused { FG } else { DIM })
+                .fg(if focused { theme::fg() } else { theme::dim() })
                 .bold(),
         )
-        .style(Style::new().bg(BG))
+        .style(Style::new().bg(theme::bg()))
 }
-
-/// Border color of panels without focus: visible but quiet.
-const BAR_BG_BORDER: ratatui::style::Color = ratatui::style::Color::Rgb(70, 72, 86);
 
 fn folder_name(app: &App) -> String {
     app.cwd
@@ -117,20 +117,23 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         let accent = liman_widgets::theme::type_color(liman_core::FileType::Folder);
         let line = Line::from(vec![
             Span::raw(" ⌕ ").fg(accent).bold(),
-            Span::raw(results.command.clone()).fg(FG).bold(),
+            Span::raw(results.command.clone()).fg(theme::fg()).bold(),
             Span::raw(format!(
                 "  ·  {} found in {}",
                 format::items(results.count),
                 app.cwd.display()
             ))
-            .fg(DIM),
-            Span::raw("   Bksp/Esc back to the folder").fg(DIM),
+            .fg(theme::dim()),
+            Span::raw("   Bksp/Esc back to the folder").fg(theme::dim()),
         ]);
         frame.render_widget(Paragraph::new(line), area);
         return;
     }
     let line = breadcrumb::line(&app.path_segments());
-    frame.render_widget(Paragraph::new(line).style(Style::new().bg(BAR_BG)), area);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::new().bg(theme::bar_bg())),
+        area,
+    );
 }
 
 fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -170,7 +173,7 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Fill(1),
     ])
     .areas(area);
-    frame.render_widget(Paragraph::new(message).centered().fg(DIM), middle);
+    frame.render_widget(Paragraph::new(message).centered().fg(theme::dim()), middle);
 }
 
 /// Draws the shell's screen (vt100 cells) inside a rounded frame; blue frame = keys go to the shell.
@@ -180,7 +183,7 @@ fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
     let accent = if focused {
         liman_widgets::theme::type_color(liman_core::FileType::Folder)
     } else {
-        DIM
+        theme::dim()
     };
     let hint = match app.term_mode {
         TermMode::Fullscreen => " Terminal · Ctrl+O back to files ",
@@ -192,7 +195,7 @@ fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(accent))
-        .title(Span::raw(hint).fg(if focused { FG } else { DIM }));
+        .title(Span::raw(hint).fg(if focused { theme::fg() } else { theme::dim() }));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -211,8 +214,8 @@ fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
                 continue; // covered by the wide character to its left
             }
             let mut style = Style::new()
-                .fg(term_color(cell.fgcolor(), FG))
-                .bg(term_color(cell.bgcolor(), BG));
+                .fg(term_color(cell.fgcolor(), theme::fg()))
+                .bg(term_color(cell.bgcolor(), theme::bg()));
             if cell.bold() {
                 style = style.add_modifier(Modifier::BOLD);
             }
@@ -267,32 +270,34 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     if app.term_mode != TermMode::Hidden && app.focus == Focus::Terminal
         || app.term_mode == TermMode::Fullscreen
     {
-        spans.push(Span::raw(" ⌂ ").fg(DIM));
-        spans.push(Span::raw(app.cwd.display().to_string()).fg(FG));
+        spans.push(Span::raw(" ⌂ ").fg(theme::dim()));
+        spans.push(Span::raw(app.cwd.display().to_string()).fg(theme::fg()));
         for (key, what) in [
             ("Ctrl+O", "files / full screen"),
             ("F6", "focus"),
             ("F4", "panel"),
         ] {
             spans.push(Span::raw(format!("  {key} ")).bold());
-            spans.push(Span::raw(what).fg(DIM));
+            spans.push(Span::raw(what).fg(theme::dim()));
         }
         frame.render_widget(
-            Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BAR_BG)),
+            Paragraph::new(Line::from(spans))
+                .style(Style::new().fg(theme::fg()).bg(theme::bar_bg())),
             area,
         );
         return;
     }
     if let Some(input) = &app.rename {
-        spans.push(Span::raw(" Rename: ").fg(DIM));
-        spans.push(Span::raw(input.text.as_str()).fg(FG).bold());
-        spans.push(Span::raw("▏  ").fg(FG));
+        spans.push(Span::raw(" Rename: ").fg(theme::dim()));
+        spans.push(Span::raw(input.text.as_str()).fg(theme::fg()).bold());
+        spans.push(Span::raw("▏  ").fg(theme::fg()));
         spans.push(Span::raw(" Enter ").bold());
-        spans.push(Span::raw("rename ").fg(DIM));
+        spans.push(Span::raw("rename ").fg(theme::dim()));
         spans.push(Span::raw(" Esc ").bold());
-        spans.push(Span::raw("cancel").fg(DIM));
+        spans.push(Span::raw("cancel").fg(theme::dim()));
         frame.render_widget(
-            Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BAR_BG)),
+            Paragraph::new(Line::from(spans))
+                .style(Style::new().fg(theme::fg()).bg(theme::bar_bg())),
             area,
         );
         return;
@@ -304,19 +309,23 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             .min(100);
         spans.push(
             Span::raw(format!(" {}… {percent}%  ", job.label))
-                .fg(FG)
+                .fg(theme::fg())
                 .bold(),
         );
     }
     if app.filter_editing || !app.filter.is_empty() {
-        spans.push(Span::raw(format!(" /{}", app.filter)).fg(FG).bold());
+        spans.push(
+            Span::raw(format!(" /{}", app.filter))
+                .fg(theme::fg())
+                .bold(),
+        );
         if app.filter_editing {
-            spans.push(Span::raw("▏").fg(FG));
+            spans.push(Span::raw("▏").fg(theme::fg()));
         }
         spans.push(Span::raw("  "));
     }
     if let Some(count) = app.entry_count() {
-        spans.push(Span::raw(format!(" {}", format::items(count))).fg(FG));
+        spans.push(Span::raw(format!(" {}", format::items(count))).fg(theme::fg()));
     }
     if let Some(entry) = app.selected_entry() {
         let size = if entry.is_dir {
@@ -325,26 +334,28 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             Some(format::size(entry.size))
         };
         let size = size.map(|s| format!(" ({s})")).unwrap_or_default();
-        spans.push(Span::raw(format!(" | “{}” selected{size}", entry.name)).fg(DIM));
+        spans.push(Span::raw(format!(" | “{}” selected{size}", entry.name)).fg(theme::dim()));
     }
     if !app.marked.is_empty() {
-        spans.push(Span::raw(format!(" | {} marked", app.marked.len())).fg(FG));
+        spans.push(Span::raw(format!(" | {} marked", app.marked.len())).fg(theme::fg()));
     }
     if let Some(clip) = &app.clipboard {
         let verb = match clip.mode {
             ClipMode::Copy => "copied",
             ClipMode::Cut => "cut",
         };
-        spans.push(Span::raw(format!(" | {} {verb}", format::items(clip.paths.len()))).fg(DIM));
+        spans.push(
+            Span::raw(format!(" | {} {verb}", format::items(clip.paths.len()))).fg(theme::dim()),
+        );
     }
     let view = match app.drawn_view {
         View::Grid => format!("Grid {}", app.drawn_grid_level + 1),
         other => other.name().to_string(),
     };
-    spans.push(Span::raw(format!(" | {view} view")).fg(DIM));
+    spans.push(Span::raw(format!(" | {view} view")).fg(theme::dim()));
     spans.push(Span::raw("  "));
     if let Some(message) = &app.message {
-        spans.push(Span::raw(format!("{message}  ")).fg(FG));
+        spans.push(Span::raw(format!("{message}  ")).fg(theme::fg()));
     }
     let hints: &[(&str, &str)] = if app.filter_editing {
         &[("Enter", "keep filter"), ("Esc", "clear")]
@@ -359,6 +370,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("^Z", "undo"),
             ("v", "small/large"),
             ("+/-", "zoom"),
+            ("t", "theme"),
             ("Tab", "panels"),
             ("/", "filter"),
             ("q", "quit"),
@@ -366,10 +378,10 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     };
     for (key, what) in hints {
         spans.push(Span::raw(format!(" {key} ")).bold());
-        spans.push(Span::raw(format!("{what} ")).fg(DIM));
+        spans.push(Span::raw(format!("{what} ")).fg(theme::dim()));
     }
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BAR_BG)),
+        Paragraph::new(Line::from(spans)).style(Style::new().fg(theme::fg()).bg(theme::bar_bg())),
         area,
     );
 }

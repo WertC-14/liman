@@ -19,7 +19,7 @@ use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 
 use crate::badge::{self, badge};
 use crate::boxes;
-use crate::theme::{DIM, FG, MARKED_BG, SELECTED_BG};
+use crate::theme;
 
 /// Rows taken by the header line and the blank line under it.
 pub const HEADER_HEIGHT: u16 = 2;
@@ -100,23 +100,25 @@ impl<'a> FileList<'a> {
         }
         name.push(Span::raw(entry.name.clone()));
         if entry.is_symlink {
-            name.push(Span::raw(" ↗").fg(DIM));
+            name.push(Span::raw(" ↗").fg(theme::dim()));
         }
         let name = Line::from(name);
-        let size = Line::from(size_text(entry)).right_aligned().fg(DIM);
+        let size = Line::from(size_text(entry))
+            .right_aligned()
+            .fg(theme::dim());
         let modified = Line::from(self.modified_text(entry))
             .right_aligned()
-            .fg(DIM);
+            .fg(theme::dim());
         let row = match self.mode {
             ListMode::Detailed => Row::new([
                 Cell::from(badge(entry)),
-                Cell::from(name.fg(FG)),
+                Cell::from(name.fg(theme::fg())),
                 Cell::from(size),
                 Cell::from(modified),
             ]),
             ListMode::Normal => Row::new([
                 Cell::from(boxes::render(entry)),
-                Cell::from(on_label_line(name.fg(FG))),
+                Cell::from(on_label_line(name.fg(theme::fg()))),
                 Cell::from(on_label_line(size)),
                 Cell::from(on_label_line(modified)),
             ])
@@ -124,7 +126,7 @@ impl<'a> FileList<'a> {
             .bottom_margin(1),
         };
         if is_marked {
-            row.style(Style::new().bg(MARKED_BG))
+            row.style(Style::new().bg(theme::marked_bg()))
         } else {
             row
         }
@@ -154,7 +156,7 @@ impl StatefulWidget for FileList<'_> {
             Cell::from(Line::from("Size").right_aligned()),
             Cell::from(Line::from("Modified").right_aligned()),
         ])
-        .style(Style::new().fg(DIM))
+        .style(Style::new().fg(theme::dim()))
         .bottom_margin(1);
 
         let icon_width = match self.mode {
@@ -171,7 +173,7 @@ impl StatefulWidget for FileList<'_> {
         let table = Table::new(rows, widths)
             .header(header)
             .column_spacing(2)
-            .row_highlight_style(Style::new().bg(SELECTED_BG));
+            .row_highlight_style(Style::new().bg(theme::selected_bg()));
         StatefulWidget::render(table, area, buf, state);
     }
 }
@@ -275,7 +277,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let row: String = (0..60).map(|x| buffer[(x, 3)].symbol()).collect();
         assert!(row.contains("✓ b.txt"));
-        assert_eq!(buffer[(30, 3)].bg, MARKED_BG);
+        assert_eq!(buffer[(30, 3)].bg, theme::marked_bg());
     }
 
     #[test]

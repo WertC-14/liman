@@ -2,6 +2,7 @@
 //!
 //! This crate must not depend on ratatui or any terminal library.
 
+pub mod config;
 pub mod entry;
 pub mod file_type;
 pub mod format;

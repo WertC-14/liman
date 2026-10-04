@@ -352,6 +352,7 @@ impl App {
             KeyCode::Char('/') => self.filter_editing = true,
             KeyCode::Char('~') => self.load(self.places.home.clone()),
             KeyCode::Char('v') => self.toggle_compact(),
+            KeyCode::Char('t') => self.next_theme(),
             // Ctrl variants arrive only in terminals that report them; plain keys always work.
             KeyCode::Char('+' | '=') => self.zoom(1),
             KeyCode::Char('-') => self.zoom(-1),
@@ -515,6 +516,16 @@ impl App {
             _ => return false,
         }
         true
+    }
+
+    /// `t`: next color theme, remembered in the config file.
+    fn next_theme(&mut self) {
+        let name = liman_widgets::theme::cycle();
+        let file = liman_core::config::path(&self.places.home);
+        self.message = Some(match liman_core::config::set(&file, "theme", name) {
+            Ok(()) => format!("Theme: {name}"),
+            Err(e) => format!("Theme: {name} (not saved: {e})"),
+        });
     }
 
     /// `v`: one key between the compact list (like cardea) and the large view last used.
