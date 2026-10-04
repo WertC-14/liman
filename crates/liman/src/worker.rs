@@ -96,3 +96,14 @@ pub fn spawn_git_command(tx: Sender<AppEvent>, dir: PathBuf, args: Vec<String>, 
         let _ = tx.send(AppEvent::GitDone { label, result });
     });
 }
+
+/// Builds the preview of one path (F3 panel).
+pub fn spawn_preview(tx: Sender<AppEvent>, key: crate::app::PreviewKey) {
+    thread::spawn(move || {
+        let preview = liman_core::preview::build(&key.0, key.1, key.2);
+        let _ = tx.send(AppEvent::Preview {
+            key,
+            preview: Box::new(preview),
+        });
+    });
+}

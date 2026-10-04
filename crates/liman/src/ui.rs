@@ -383,6 +383,7 @@ fn render_help(frame: &mut Frame) {
         ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
         ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
         ("Shift+Del", "delete for good (asks first)"),
+        ("F3", "preview panel"),
         ("F4 / Ctrl+O", "terminal panel / full screen"),
         ("Alt+Enter", "selected paths into the terminal"),
         ("Ctrl+↑ / Ctrl+↓", "terminal size"),
@@ -464,6 +465,14 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
         app.sidebar_area = Rect::default();
         body
     };
+    // F3: preview on the right, if the files keep enough room.
+    let (main, preview_area) = if app.preview.shown && main.width >= 60 {
+        let [files, preview] =
+            Layout::horizontal([Constraint::Percentage(58), Constraint::Fill(1)]).areas(main);
+        (files, Some(preview))
+    } else {
+        (main, None)
+    };
     let files_focused = app.focus == Focus::Files;
     let title = match (&app.results, app.entry_count()) {
         (Some(_), Some(n)) => format!(" Results · {} ", format::items(n)),
@@ -475,7 +484,30 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
     frame.render_widget(block, main);
     let main = inner;
     render_list(frame, app, main.inner(Margin::new(2, 1)));
+    match preview_area {
+        Some(area) => render_preview(frame, app, area),
+        None => app.preview.area = Rect::default(),
+    }
     render_status_bar(frame, app, status);
+}
+
+fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = panel(" Preview ", false);
+    let inner = block.inner(area).inner(Margin::new(1, 1));
+    frame.render_widget(block, area);
+    app.preview.area = inner;
+    app.want_preview(
+        inner.width,
+        inner
+            .height
+            .saturating_sub(liman_widgets::preview::HEADER_ROWS),
+    );
+    if let Some(preview) = &app.preview.current {
+        frame.render_widget(
+            liman_widgets::preview::PreviewView::new(preview).scroll(app.preview.scroll),
+            inner,
+        );
+    }
 }
 
 /// A rounded panel with a title; the focused one gets the accent color (style A, fm-research LOG).

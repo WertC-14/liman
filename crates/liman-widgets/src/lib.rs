@@ -8,6 +8,7 @@ pub mod breadcrumb;
 pub mod file_list;
 pub mod gitmark;
 pub mod grid;
+pub mod preview;
 pub mod sidebar;
 pub mod symbols;
 pub mod theme;

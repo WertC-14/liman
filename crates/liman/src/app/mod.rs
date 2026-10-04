@@ -3,11 +3,13 @@
 mod actions;
 mod file_ops;
 mod git_ops;
+mod preview;
 mod terminal_mode;
 
 pub use actions::{Action, Menu};
 pub use file_ops::{ClipMode, Clipboard, Dialog, JobStatus, RenameInput};
 pub use git_ops::GitPanel;
+pub use preview::{PreviewKey, PreviewPane};
 pub use terminal_mode::{Focus, TermMode};
 
 use std::collections::HashSet;
@@ -180,6 +182,8 @@ pub struct App {
     git_again: bool,
     /// Watches the open folder for changes made by anyone.
     watch: crate::watch::FolderWatch,
+    /// F3: preview of the selected item.
+    pub preview: PreviewPane,
     /// Command palette (Ctrl+P) or right-click menu.
     pub menu: Option<Menu>,
     /// Where the menu was drawn (for clicks). Written by the UI.
@@ -265,6 +269,7 @@ impl App {
             commit_input: None,
             branch_picker: None,
             git_again: false,
+            preview: PreviewPane::default(),
             menu: None,
             menu_area: Rect::default(),
             rename_after_load: false,
@@ -318,6 +323,7 @@ impl App {
     /// Reads the open folder again without blanking the view: the old list stays until the new one
     /// arrives; selection, marks and filter are kept.
     pub fn refresh(&mut self) {
+        self.invalidate_preview();
         if self.select_after_load.is_none() {
             self.select_after_load = self.selected_entry().map(|e| e.name.clone());
         }
@@ -391,6 +397,7 @@ impl App {
                 }
             }
             AppEvent::GitDone { label, result } => self.on_git_done(label, result),
+            AppEvent::Preview { key, preview } => self.on_preview(key, *preview),
             AppEvent::TermQuiet => {
                 let Some(term) = &mut self.terminal else {
                     return;
@@ -428,6 +435,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::F(4) => return self.toggle_panel(),
+            KeyCode::F(3) => return self.toggle_preview(),
             KeyCode::Char('o') if ctrl => return self.toggle_fullscreen(),
             KeyCode::F(6) if self.term_mode == TermMode::Panel => return self.switch_focus(),
             KeyCode::Up if ctrl && self.term_mode == TermMode::Panel => {
@@ -591,6 +599,16 @@ impl App {
         match mouse.kind {
             MouseEventKind::ScrollUp if ctrl => self.zoom(1),
             MouseEventKind::ScrollDown if ctrl => self.zoom(-1),
+            MouseEventKind::ScrollDown
+                if self.preview.area.contains((mouse.column, mouse.row).into()) =>
+            {
+                self.scroll_preview(3)
+            }
+            MouseEventKind::ScrollUp
+                if self.preview.area.contains((mouse.column, mouse.row).into()) =>
+            {
+                self.scroll_preview(-3)
+            }
             MouseEventKind::ScrollDown => self.move_selection(self.wheel_step()),
             MouseEventKind::ScrollUp => self.move_selection(-self.wheel_step()),
             MouseEventKind::Down(MouseButton::Left)
@@ -1031,6 +1049,9 @@ impl App {
             .and_then(|s| liman_core::sort::SortOrder::from_config(s))
         {
             self.sort = order;
+        }
+        if settings.get("preview").is_some_and(|v| v == "true") {
+            self.preview.shown = true;
         }
         if settings.get("hidden").is_some_and(|v| v == "true") && !self.options.show_hidden {
             self.options.show_hidden = true;

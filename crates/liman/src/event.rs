@@ -30,6 +30,11 @@ pub enum AppEvent {
     /// Bytes the embedded shell wrote.
     TermOutput(Vec<u8>),
     /// `git status` finished for the repository around `dir`.
+    /// A preview finished building (F3 panel).
+    Preview {
+        key: crate::app::PreviewKey,
+        preview: Box<liman_core::preview::Preview>,
+    },
     Git {
         dir: PathBuf,
         status: Option<liman_core::git::GitStatus>,

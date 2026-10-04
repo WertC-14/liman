@@ -36,6 +36,7 @@ pub enum Action {
     Up,
     Home,
     Recent,
+    Preview,
     TerminalPanel,
     TerminalFullScreen,
     Theme,
@@ -52,7 +53,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 40] = [
+    pub const ALL: [Action; 41] = [
         Self::GitPanel,
         Self::GitStage,
         Self::GitUnstage,
@@ -88,6 +89,7 @@ impl Action {
         Self::Up,
         Self::Home,
         Self::Recent,
+        Self::Preview,
         Self::TerminalPanel,
         Self::TerminalFullScreen,
         Self::Theme,
@@ -152,6 +154,7 @@ impl Action {
             Self::Up => "Parent folder",
             Self::Home => "Home",
             Self::Recent => "Recent files",
+            Self::Preview => "Preview panel",
             Self::TerminalPanel => "Terminal panel",
             Self::TerminalFullScreen => "Terminal full screen",
             Self::Theme => "Theme…",
@@ -197,6 +200,7 @@ impl Action {
             Self::Up => "Bksp",
             Self::Home => "~",
             Self::Recent => "",
+            Self::Preview => "F3",
             Self::TerminalPanel => "F4",
             Self::TerminalFullScreen => "Ctrl+O",
             Self::Theme => "t",
@@ -274,6 +278,7 @@ impl App {
             Action::Up => self.go_up(),
             Action::Home => self.load(self.places.home.clone()),
             Action::Recent => self.show_recent(),
+            Action::Preview => self.toggle_preview(),
             Action::TerminalPanel => self.toggle_panel(),
             Action::TerminalFullScreen => self.toggle_fullscreen(),
             Action::Theme => self.open_theme_picker(),
