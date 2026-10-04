@@ -24,6 +24,43 @@ pub fn spawn_listing(tx: Sender<AppEvent>, generation: u64, path: PathBuf, opts:
     });
 }
 
+/// Counts the children of `dirs` (the folders of listing `generation`). Stops as soon as the
+/// app moved on (`current` changed); sends what it has every COUNT_BATCH so the first counts
+/// appear quickly in a folder with thousands of subfolders.
+pub fn spawn_counts(
+    tx: Sender<AppEvent>,
+    generation: u64,
+    current: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    dirs: Vec<PathBuf>,
+    opts: ListOptions,
+) {
+    const COUNT_BATCH: Duration = Duration::from_millis(50);
+    thread::spawn(move || {
+        let mut batch = Vec::new();
+        let mut last = Instant::now();
+        for dir in dirs {
+            if current.load(std::sync::atomic::Ordering::Relaxed) != generation {
+                return;
+            }
+            let count = liman_core::listing::count_children(&dir, opts);
+            batch.push((dir, count));
+            if last.elapsed() >= COUNT_BATCH {
+                last = Instant::now();
+                let counts = std::mem::take(&mut batch);
+                if tx.send(AppEvent::Counts { generation, counts }).is_err() {
+                    return;
+                }
+            }
+        }
+        if !batch.is_empty() {
+            let _ = tx.send(AppEvent::Counts {
+                generation,
+                counts: batch,
+            });
+        }
+    });
+}
+
 /// Progress events are sent at most this often, so a copy of many small files does not flood the UI.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 

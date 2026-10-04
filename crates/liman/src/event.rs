@@ -22,6 +22,11 @@ pub enum AppEvent {
         path: PathBuf,
         result: Result<Vec<Entry>, String>,
     },
+    /// Children counts of folders in the listing `generation` (sent in batches).
+    Counts {
+        generation: u64,
+        counts: Vec<(PathBuf, Option<usize>)>,
+    },
     /// The running job got further (bytes for copy/move, items for the rest).
     JobProgress {
         done: u64,

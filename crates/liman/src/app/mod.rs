@@ -400,6 +400,7 @@ impl App {
                     self.request_git();
                 }
             }
+            AppEvent::Counts { generation, counts } => self.on_counts(generation, counts),
             AppEvent::GitDone { label, result } => self.on_git_done(label, result),
             AppEvent::Preview { key, preview } => self.on_preview(key, *preview),
             AppEvent::TermQuiet => {
@@ -1100,8 +1101,19 @@ impl App {
 
     /// Re-sorts the listing in place (no reload) and keeps the selected entry selected.
     fn set_sort(&mut self, order: liman_core::sort::SortOrder) {
-        self.sort = order;
         self.save_setting("sort", &order.to_config());
+        self.set_sort_quietly(order);
+        let template = if order.descending {
+            "Sorted by {}, descending"
+        } else {
+            "Sorted by {}"
+        };
+        self.message = Some(trf(template, &[&tr(order.key.name())]));
+    }
+
+    /// Sorts again, keeping the selected entry selected (no message, not saved).
+    fn set_sort_quietly(&mut self, order: liman_core::sort::SortOrder) {
+        self.sort = order;
         let keep = self.selected_entry().map(|e| e.path.clone());
         if let Listing::Ready(entries) = &mut self.listing {
             liman_core::sort::sort_with(entries, order);
@@ -1113,12 +1125,6 @@ impl App {
             .and_then(|p| self.visible_entries().iter().position(|e| e.path == p))
             .unwrap_or(0);
         self.select_row(row);
-        let template = if order.descending {
-            "Sorted by {}, descending"
-        } else {
-            "Sorted by {}"
-        };
-        self.message = Some(trf(template, &[&tr(order.key.name())]));
     }
 
     /// `v`: one key between the compact list (like cardea) and the large view last used.
@@ -1349,6 +1355,27 @@ impl App {
 
     // ---- worker results ----
 
+    /// Folder child counts arrived (after the listing): fill them in; a size sort uses them.
+    fn on_counts(&mut self, generation: u64, counts: Vec<(PathBuf, Option<usize>)>) {
+        if generation != self.generation {
+            return;
+        }
+        let Listing::Ready(entries) = &mut self.listing else {
+            return;
+        };
+        let counts: std::collections::HashMap<PathBuf, Option<usize>> =
+            counts.into_iter().collect();
+        for entry in entries.iter_mut().filter(|e| e.is_dir) {
+            if let Some(count) = counts.get(&entry.path) {
+                entry.item_count = *count;
+            }
+        }
+        if self.sort.key == liman_core::sort::SortKey::Size && self.results.is_none() {
+            self.set_sort_quietly(self.sort);
+        }
+        self.dirty = true;
+    }
+
     fn on_listing(&mut self, generation: u64, path: PathBuf, result: Result<Vec<Entry>, String>) {
         if generation != self.generation {
             return; // stale: a newer request is on its way
@@ -1376,11 +1403,20 @@ impl App {
                 self.select_after_load = self.remembered.get(&path).cloned();
             }
         }
+        // A reload of the same folder keeps the counts it had until the new ones arrive (no flicker).
+        let old_counts: std::collections::HashMap<PathBuf, usize> = match &self.listing {
+            Listing::Ready(old) if path == self.cwd => old
+                .iter()
+                .filter_map(|e| Some((e.path.clone(), e.item_count?)))
+                .collect(),
+            _ => Default::default(),
+        };
         self.cwd = path;
         self.listing = match result {
             Ok(mut entries) => {
                 for entry in entries.iter_mut().filter(|e| e.is_dir) {
                     entry.special = self.places.kind_of(&entry.path);
+                    entry.item_count = old_counts.get(&entry.path).copied();
                 }
                 // Folders come sorted by name; results keep the command's order.
                 if self.results_pending.is_none()
@@ -1392,6 +1428,22 @@ impl App {
             }
             Err(err) => Listing::Failed(err),
         };
+        if let Listing::Ready(entries) = &self.listing {
+            let dirs: Vec<PathBuf> = entries
+                .iter()
+                .filter(|e| e.is_dir)
+                .map(|e| e.path.clone())
+                .collect();
+            if !dirs.is_empty() {
+                worker::spawn_counts(
+                    self.tx.clone(),
+                    self.generation,
+                    self.current_generation.clone(),
+                    dirs,
+                    self.options,
+                );
+            }
+        }
         self.names_lower.clear();
         self.visible_for.clear();
         self.refresh_visible();
@@ -1947,5 +1999,32 @@ mod tests {
             result: Ok(Vec::new()),
         });
         assert!(matches!(app.listing, Listing::Loading));
+    }
+}
+
+#[cfg(test)]
+mod count_tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn folder_counts_arrive_after_the_listing() {
+        let dir = std::env::temp_dir().join(format!("liman-counts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        for f in ["a", "b", "c"] {
+            std::fs::write(dir.join("sub").join(f), "").unwrap();
+        }
+        let (tx, rx) = mpsc::channel();
+        let mut app = App::new(dir.clone(), Places::from_user_dirs("", &dir), tx);
+        let count = |app: &App| match &app.listing {
+            Listing::Ready(e) => e[0].item_count,
+            _ => None,
+        };
+        while count(&app).is_none() {
+            app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        }
+        assert_eq!(count(&app), Some(3));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

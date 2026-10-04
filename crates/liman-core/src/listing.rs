@@ -27,7 +27,7 @@ pub fn list_dir(dir: &Path, opts: ListOptions) -> io::Result<Vec<Entry>> {
 }
 
 /// One entry with its metadata. `name` is what the user sees (normally the file name).
-pub fn entry_for(path: std::path::PathBuf, name: String, opts: ListOptions) -> Entry {
+pub fn entry_for(path: std::path::PathBuf, name: String, _opts: ListOptions) -> Entry {
     let link = fs::symlink_metadata(&path).ok();
     let is_symlink = link.as_ref().is_some_and(|m| m.file_type().is_symlink());
     // Follow symlinks for size and type; a broken link falls back to the link itself.
@@ -41,8 +41,9 @@ pub fn entry_for(path: std::path::PathBuf, name: String, opts: ListOptions) -> E
         } else {
             meta.as_ref().map_or(0, |m| m.len())
         },
-        // One extra read_dir per folder, not recursive. Fine for local disks; slow mounts are a later concern (Q11).
-        item_count: is_dir.then(|| count_children(&path, opts)).flatten(),
+        // Counted later by `count_children` on a worker, so a folder with many subfolders (or a
+        // slow mount) shows its list at once.
+        item_count: None,
         modified: meta.and_then(|m| m.modified().ok()),
         name,
         path,
@@ -52,7 +53,8 @@ pub fn entry_for(path: std::path::PathBuf, name: String, opts: ListOptions) -> E
     }
 }
 
-fn count_children(dir: &Path, opts: ListOptions) -> Option<usize> {
+/// Number of (visible) children of `dir`: one `read_dir`, not recursive. `None` if unreadable.
+pub fn count_children(dir: &Path, opts: ListOptions) -> Option<usize> {
     let iter = fs::read_dir(dir).ok()?;
     Some(
         iter.filter_map(Result::ok)
@@ -86,13 +88,20 @@ mod tests {
         let entries = list_dir(&dir, ListOptions::default()).unwrap();
         let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["Music", "a2.pdf", "a10.pdf", "b.txt"]);
-        assert_eq!(entries[0].item_count, Some(1));
+        assert_eq!(entries[0].item_count, None); // counted separately
+        assert_eq!(
+            count_children(&entries[0].path, ListOptions::default()),
+            Some(1)
+        );
         assert_eq!(entries[0].file_type, FileType::Folder);
         assert_eq!(entries[3].size, 5);
 
         let all = list_dir(&dir, ListOptions { show_hidden: true }).unwrap();
         assert_eq!(all.len(), 5);
-        assert_eq!(all[0].item_count, Some(2));
+        assert_eq!(
+            count_children(&all[0].path, ListOptions { show_hidden: true }),
+            Some(2)
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
