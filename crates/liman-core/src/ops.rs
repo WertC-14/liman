@@ -138,7 +138,7 @@ pub fn move_path(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-fn remove_all(path: &Path) -> io::Result<()> {
+pub fn remove_all(path: &Path) -> io::Result<()> {
     if path.symlink_metadata()?.is_dir() {
         fs::remove_dir_all(path)
     } else {

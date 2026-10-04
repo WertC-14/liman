@@ -18,7 +18,9 @@ const SIDEBAR_MIN_WIDTH: u16 = 70;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     render_screen(frame, app);
-    if app.theme_picker.is_some() {
+    if let Some(dialog) = &app.dialog {
+        render_dialog(frame, dialog);
+    } else if app.theme_picker.is_some() {
         render_theme_picker(frame, app);
     } else if app.help_open {
         render_help(frame);
@@ -72,6 +74,72 @@ fn render_theme_picker(frame: &mut Frame, app: &mut App) {
     }
 }
 
+fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
+    use crate::app::Dialog;
+    let (title, lines): (&str, Vec<Line>) = match dialog {
+        Dialog::Conflict { existing } => {
+            let mut lines = vec![
+                Line::from(format!("{} already here:", format::items(existing.len())))
+                    .fg(theme::fg()),
+            ];
+            for path in existing.iter().take(5) {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                lines.push(Line::from(format!("  • {name}")).fg(theme::dim()));
+            }
+            if existing.len() > 5 {
+                lines.push(
+                    Line::from(format!("  … and {} more", existing.len() - 5)).fg(theme::dim()),
+                );
+            }
+            lines.push(Line::default());
+            lines.push(Line::from(vec![
+                Span::raw(" b ").bold().fg(theme::accent()),
+                Span::raw("keep both (Enter)   ").fg(theme::fg()),
+                Span::raw(" r ").bold().fg(theme::accent()),
+                Span::raw("replace (old to trash)   ").fg(theme::fg()),
+                Span::raw(" s ").bold().fg(theme::accent()),
+                Span::raw("skip   ").fg(theme::fg()),
+                Span::raw(" Esc ").bold().fg(theme::dim()),
+            ]));
+            (" Paste ", lines)
+        }
+        Dialog::ConfirmDelete { paths } => {
+            let what = match paths.as_slice() {
+                [one] => format!(
+                    "“{}”",
+                    one.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                ),
+                many => format::items(many.len()),
+            };
+            let lines = vec![
+                Line::from(format!("Delete {what} for good?"))
+                    .fg(theme::fg())
+                    .bold(),
+                Line::from("This cannot be undone (Del moves to the trash instead).")
+                    .fg(theme::dim()),
+                Line::default(),
+                Line::from(vec![
+                    Span::raw(" y ")
+                        .bold()
+                        .fg(theme::type_color(liman_core::FileType::Pdf)),
+                    Span::raw("delete   ").fg(theme::fg()),
+                    Span::raw(" n / Esc ").bold().fg(theme::accent()),
+                    Span::raw("keep").fg(theme::fg()),
+                ]),
+            ];
+            (" Delete for good ", lines)
+        }
+    };
+    let height = lines.len() as u16 + 4;
+    let inner = popup(frame, title, 72, height);
+    frame.render_widget(Paragraph::new(lines), inner.inner(Margin::new(1, 1)));
+}
+
 fn render_help(frame: &mut Frame) {
     const KEYS: &[(&str, &str)] = &[
         ("Enter / double click", "open"),
@@ -87,6 +155,7 @@ fn render_help(frame: &mut Frame) {
         ("Space / Ctrl+A", "mark / mark all"),
         ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
         ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
+        ("Shift+Del", "delete for good (asks first)"),
         ("F4 / Ctrl+O", "terminal panel / full screen"),
         ("Alt+Enter", "selected paths into the terminal"),
         ("Ctrl+↑ / Ctrl+↓", "terminal size"),

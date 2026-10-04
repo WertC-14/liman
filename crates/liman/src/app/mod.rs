@@ -3,7 +3,7 @@
 mod file_ops;
 mod terminal_mode;
 
-pub use file_ops::{ClipMode, Clipboard, JobStatus, RenameInput};
+pub use file_ops::{ClipMode, Clipboard, Dialog, JobStatus, RenameInput};
 pub use terminal_mode::{Focus, TermMode};
 
 use std::collections::HashSet;
@@ -143,6 +143,8 @@ pub struct App {
     dragging_panel: bool,
     /// The large view `v` returns to from the compact list.
     last_large_view: View,
+    /// A question in the middle of the screen (paste conflicts, permanent delete).
+    pub dialog: Option<Dialog>,
     /// Ctrl+F: the search text being typed.
     pub search_input: Option<String>,
     /// Newest listing/search id, shared with search workers so old searches stop early.
@@ -210,6 +212,7 @@ impl App {
             results: None,
             theme_picker: None,
             search_input: None,
+            dialog: None,
             current_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             help_open: false,
             picker_area: Rect::default(),
@@ -350,6 +353,9 @@ impl App {
         if self.focus == Focus::Places && self.on_places_key(key) {
             return;
         }
+        if self.dialog.is_some() {
+            return self.on_dialog_key(key);
+        }
         if self.theme_picker.is_some() {
             return self.on_picker_key(key);
         }
@@ -384,6 +390,7 @@ impl App {
             KeyCode::Char('v') if ctrl => self.paste(),
             KeyCode::Char('a') if ctrl => self.mark_all(),
             KeyCode::Char('z') if ctrl => self.undo(),
+            KeyCode::Delete if key.modifiers.contains(KeyModifiers::SHIFT) => self.ask_delete(),
             KeyCode::Delete => self.trash_targets(),
             KeyCode::F(2) => self.begin_rename(),
             KeyCode::Char(' ') => self.toggle_mark(),

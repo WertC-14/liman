@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use liman_core::job::{Done, Job, Outcome};
+use liman_core::job::{Job, Outcome};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use super::App;
@@ -26,6 +26,24 @@ pub struct JobStatus {
     pub label: String,
     pub done: u64,
     pub total: u64,
+}
+
+/// How to paste over names that already exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Conflict {
+    /// Keep the old file, the pasted one becomes `name (2)`.
+    KeepBoth,
+    /// Move the old file to the trash, paste the new one.
+    Replace,
+    /// Paste only what does not exist yet.
+    Skip,
+}
+
+/// A question shown in the middle of the screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Dialog {
+    Conflict { existing: Vec<PathBuf> },
+    ConfirmDelete { paths: Vec<PathBuf> },
 }
 
 /// F2: the new name being typed.
@@ -87,19 +105,94 @@ impl App {
         self.marked.clear();
     }
 
+    /// Ctrl+V. If names already exist here, asks first (keep both / replace / skip).
     pub(super) fn paste(&mut self) {
         let Some(clip) = &self.clipboard else {
             self.message = Some("Nothing to paste: use Ctrl+C or Ctrl+X first".into());
             return;
         };
-        let (sources, dest) = (clip.paths.clone(), self.cwd.clone());
+        let dest = self.cwd.clone();
+        let conflicts: Vec<PathBuf> = clip
+            .paths
+            .iter()
+            .filter(|src| src.parent() != Some(dest.as_path())) // pasting into the same folder: copies get "(2)"
+            .filter_map(|src| src.file_name().map(|n| dest.join(n)))
+            .filter(|target| target.symlink_metadata().is_ok())
+            .collect();
+        if conflicts.is_empty() {
+            self.paste_with(Conflict::KeepBoth);
+        } else {
+            self.dialog = Some(Dialog::Conflict {
+                existing: conflicts,
+            });
+        }
+    }
+
+    /// Runs the paste with the chosen answer to name conflicts.
+    pub(super) fn paste_with(&mut self, answer: Conflict) {
+        let Some(clip) = &self.clipboard else {
+            return;
+        };
+        let dest = self.cwd.clone();
+        let existing = |src: &PathBuf| {
+            src.file_name()
+                .map(|n| dest.join(n))
+                .filter(|t| src.parent() != Some(dest.as_path()) && t.symlink_metadata().is_ok())
+        };
+        let mut sources = clip.paths.clone();
+        let mut replaced = Vec::new();
+        match answer {
+            Conflict::KeepBoth => {}
+            Conflict::Skip => sources.retain(|s| existing(s).is_none()),
+            Conflict::Replace => replaced = sources.iter().filter_map(existing).collect(),
+        }
+        if sources.is_empty() {
+            self.message = Some("Nothing to paste: every item already exists here".into());
+            return;
+        }
         let n = liman_core::format::items(sources.len());
-        let (job, label) = match clip.mode {
+        let (paste, label) = match clip.mode {
             ClipMode::Copy => (Job::Copy { sources, dest }, format!("Copying {n}")),
             ClipMode::Cut => (Job::Move { sources, dest }, format!("Moving {n}")),
         };
+        // "Replace" moves the old files to the trash first, so Ctrl+Z brings them back.
+        let job = if replaced.is_empty() {
+            paste
+        } else {
+            Job::Batch(vec![Job::Trash { paths: replaced }, paste])
+        };
         if self.start_job(job, label) && clip_is_cut(&self.clipboard) {
             self.clipboard = None; // cut items can be pasted once
+        }
+    }
+
+    /// Shift+Del: asks before deleting for good.
+    pub(super) fn ask_delete(&mut self) {
+        let paths = self.targets();
+        if !paths.is_empty() {
+            self.dialog = Some(Dialog::ConfirmDelete { paths });
+        }
+    }
+
+    pub(super) fn on_dialog_key(&mut self, key: KeyEvent) {
+        let Some(dialog) = self.dialog.take() else {
+            return;
+        };
+        match (dialog, key.code) {
+            (Dialog::Conflict { .. }, KeyCode::Enter | KeyCode::Char('b')) => {
+                self.paste_with(Conflict::KeepBoth)
+            }
+            (Dialog::Conflict { .. }, KeyCode::Char('r')) => self.paste_with(Conflict::Replace),
+            (Dialog::Conflict { .. }, KeyCode::Char('s')) => self.paste_with(Conflict::Skip),
+            (Dialog::ConfirmDelete { paths }, KeyCode::Char('y')) => {
+                let label = format!(
+                    "Deleting {} for good",
+                    liman_core::format::items(paths.len())
+                );
+                self.start_job(Job::Delete { paths }, label);
+            }
+            (_, KeyCode::Esc | KeyCode::Char('n' | 'q')) => {}
+            (dialog, _) => self.dialog = Some(dialog), // other keys: keep asking
         }
     }
 
@@ -202,8 +295,7 @@ impl App {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned());
         self.select_after_load = focus.or_else(|| self.selected_entry().map(|e| e.name.clone()));
-        let undoable = !outcome.done.is_empty() && !matches!(outcome.done, Done::Undone(_));
-        if undoable {
+        if outcome.done.is_undoable() {
             self.history.push(outcome.done);
         }
         self.load(self.cwd.clone());
@@ -409,6 +501,40 @@ mod tests {
             bytes: b"hi\r\n".to_vec(),
         });
         assert!(app.results.is_none() && matches!(app.listing, Listing::Ready(_)));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn paste_over_existing_names_asks_and_replace_is_undoable() {
+        let (dir, mut app, rx) = setup("conflict");
+        fs::write(dir.join("dest/a.txt"), "old").unwrap();
+        select(&mut app, "a.txt");
+        ctrl(&mut app, 'c');
+        app.load(dir.join("dest"));
+        pump(&mut app, &rx, loaded);
+        ctrl(&mut app, 'v');
+        assert!(matches!(app.dialog, Some(Dialog::Conflict { .. })));
+        press(&mut app, KeyCode::Char('r'));
+        pump(&mut app, &rx, loaded);
+        assert_eq!(fs::read_to_string(dir.join("dest/a.txt")).unwrap(), "a");
+        ctrl(&mut app, 'z');
+        pump(&mut app, &rx, loaded);
+        assert_eq!(fs::read_to_string(dir.join("dest/a.txt")).unwrap(), "old");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn shift_delete_asks_and_deletes_for_good() {
+        let (dir, mut app, rx) = setup("shiftdel");
+        select(&mut app, "a.txt");
+        app.handle(key(KeyCode::Delete, KeyModifiers::SHIFT));
+        press(&mut app, KeyCode::Char('x')); // other keys keep the question open
+        assert!(matches!(app.dialog, Some(Dialog::ConfirmDelete { .. })));
+        press(&mut app, KeyCode::Char('y'));
+        pump(&mut app, &rx, loaded);
+        assert!(!dir.join("a.txt").exists());
+        assert!(!dir.join(".trash/files/a.txt").exists());
+        assert!(app.history.is_empty()); // not undoable
         fs::remove_dir_all(&dir).unwrap();
     }
 

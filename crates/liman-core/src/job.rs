@@ -28,6 +28,12 @@ pub enum Job {
     },
     /// Reverses an earlier job.
     Undo(Done),
+    /// Deletes for good (Shift+Del, after a confirmation). Cannot be undone.
+    Delete {
+        paths: Vec<PathBuf>,
+    },
+    /// Several jobs in order, undone as one (e.g. "replace" = trash the old files, then copy).
+    Batch(Vec<Job>),
 }
 
 /// What a job did. Paths are absolute.
@@ -44,6 +50,10 @@ pub enum Done {
     Trashed(Vec<TrashedItem>),
     /// An earlier job was reversed. Not undoable itself (no redo yet).
     Undone(Box<Done>),
+    /// Number of items deleted for good. Not undoable.
+    Deleted(usize),
+    /// The parts of a batch, in the order they ran.
+    Batch(Vec<Done>),
 }
 
 impl Done {
@@ -54,6 +64,17 @@ impl Done {
             Self::Renamed { .. } => false,
             Self::Trashed(v) => v.is_empty(),
             Self::Undone(_) => false,
+            Self::Deleted(n) => *n == 0,
+            Self::Batch(parts) => parts.iter().all(Done::is_empty),
+        }
+    }
+
+    /// Whether Ctrl+Z can reverse it.
+    pub fn is_undoable(&self) -> bool {
+        match self {
+            Self::Undone(_) | Self::Deleted(_) => false,
+            Self::Batch(parts) => parts.iter().all(Done::is_undoable),
+            _ => !self.is_empty(),
         }
     }
 
@@ -65,13 +86,16 @@ impl Done {
             Self::Renamed { to, .. } => Some(to),
             Self::Trashed(_) => None,
             Self::Undone(done) => done.restored_focus(),
+            Self::Deleted(_) => None,
+            Self::Batch(parts) => parts.iter().rev().find_map(Done::focus),
         }
     }
 
     /// After undoing `self`, the path that is back (old name, original place).
     fn restored_focus(&self) -> Option<&Path> {
         match self {
-            Self::Copied(_) | Self::Undone(_) => None,
+            Self::Copied(_) | Self::Undone(_) | Self::Deleted(_) => None,
+            Self::Batch(parts) => parts.iter().find_map(Done::restored_focus),
             Self::Moved(v) => v.first().map(|(from, _)| from.as_path()),
             Self::Renamed { from, .. } => Some(from),
             Self::Trashed(v) => v.first().map(|item| item.original.as_path()),
@@ -87,6 +111,13 @@ impl Done {
             Self::Renamed { from, to } => format!("Renamed “{}” to “{}”", name(from), name(to)),
             Self::Trashed(v) => format!("Moved {} to the trash", count(v.len())),
             Self::Undone(done) => format!("Undone: {}", done.describe()),
+            Self::Deleted(n) => format!("Deleted {} for good", count(*n)),
+            Self::Batch(parts) => parts
+                .iter()
+                .filter(|d| !d.is_empty())
+                .map(Done::describe)
+                .collect::<Vec<_>>()
+                .join(", "),
         }
     }
 }
@@ -108,6 +139,8 @@ impl Job {
             Self::Rename { .. } => 1,
             Self::Trash { paths } => paths.len() as u64,
             Self::Undo(_) => 1,
+            Self::Delete { paths } => paths.len() as u64,
+            Self::Batch(jobs) => jobs.iter().map(Job::total).sum(),
         }
     }
 
@@ -163,6 +196,32 @@ impl Job {
                 }
                 ok(Done::Trashed(items))
             }
+            Self::Delete { paths } => {
+                for (i, path) in paths.iter().enumerate() {
+                    if let Err(e) = ops::remove_all(path) {
+                        return fail(Done::Deleted(i), path, e);
+                    }
+                    progress(i as u64 + 1);
+                }
+                ok(Done::Deleted(paths.len()))
+            }
+            Self::Batch(jobs) => {
+                let mut parts = Vec::new();
+                let mut base = 0;
+                for job in jobs {
+                    let size = job.total();
+                    let out = job.run(trash_dir, &mut |d| progress(base + d));
+                    base += size;
+                    parts.push(out.done);
+                    if out.error.is_some() {
+                        return Outcome {
+                            done: Done::Batch(parts),
+                            error: out.error,
+                        };
+                    }
+                }
+                ok(Done::Batch(parts))
+            }
             Self::Undo(done) => {
                 let error = undo(&done, trash_dir)
                     .err()
@@ -197,7 +256,12 @@ fn undo(done: &Done, trash_dir: &Path) -> std::io::Result<()> {
                 trash::restore(item)?;
             }
         }
-        Done::Undone(_) => {}
+        Done::Undone(_) | Done::Deleted(_) => {}
+        Done::Batch(parts) => {
+            for part in parts.iter().rev() {
+                undo(part, trash_dir)?;
+            }
+        }
     }
     Ok(())
 }
@@ -319,6 +383,50 @@ mod tests {
         assert!(!dir.join("sub/a.txt").exists());
         assert!(dir.join("a.txt").exists());
         assert!(trash_dir.join("files/a.txt").exists()); // the copy went to the trash
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn replace_batch_undoes_as_one() {
+        let dir = test_dir("job-replace");
+        let trash_dir = dir.join("Trash");
+        fs::create_dir_all(dir.join("dest")).unwrap();
+        fs::write(dir.join("a.txt"), "new").unwrap();
+        fs::write(dir.join("dest/a.txt"), "old").unwrap();
+        let job = Job::Batch(vec![
+            Job::Trash {
+                paths: vec![dir.join("dest/a.txt")],
+            },
+            Job::Copy {
+                sources: vec![dir.join("a.txt")],
+                dest: dir.join("dest"),
+            },
+        ]);
+        let out = job.run(&trash_dir, &mut |_| {});
+        assert!(out.error.is_none());
+        assert_eq!(fs::read_to_string(dir.join("dest/a.txt")).unwrap(), "new");
+        assert!(out.done.is_undoable());
+        assert_eq!(
+            out.done.describe(),
+            "Moved 1 item to the trash, Copied 1 item"
+        );
+        let undo = Job::Undo(out.done).run(&trash_dir, &mut |_| {});
+        assert!(undo.error.is_none(), "{:?}", undo.error);
+        assert_eq!(fs::read_to_string(dir.join("dest/a.txt")).unwrap(), "old");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn delete_is_for_good_and_not_undoable() {
+        let dir = test_dir("job-delete");
+        fs::create_dir_all(dir.join("f/g")).unwrap();
+        let out = Job::Delete {
+            paths: vec![dir.join("f")],
+        }
+        .run(&dir.join("Trash"), &mut |_| {});
+        assert!(!dir.join("f").exists());
+        assert_eq!(out.done, Done::Deleted(1));
+        assert!(!out.done.is_undoable());
         fs::remove_dir_all(&dir).unwrap();
     }
 
