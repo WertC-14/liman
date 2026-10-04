@@ -1,20 +1,18 @@
 //! Turns [`App`] state into a frame. Immediate mode: the whole screen is described on every draw,
 //! ratatui then sends only the cells that changed since the previous frame.
 
+use liman_core::format;
+use liman_widgets::DetailedView;
+use liman_widgets::theme::{BAR_BG, BG, DIM, FG};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::App;
+use crate::app::{App, Listing};
 
-const BG: Color = Color::Rgb(21, 22, 28);
-const BAR_BG: Color = Color::Rgb(32, 33, 41);
-const FG: Color = Color::Rgb(230, 230, 235);
-const DIM: Color = Color::Rgb(150, 150, 160);
-
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     let [top, body, status] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
@@ -23,7 +21,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     .areas(frame.area());
 
     frame.render_widget(Block::new().style(Style::new().bg(BG)), frame.area());
+    render_top_bar(frame, app, top);
+    render_body(frame, app, body.inner(Margin::new(2, 1)));
+    render_status_bar(frame, app, status);
+}
 
+fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     let path = Line::from(vec![
         Span::raw(" liman ").bold(),
         Span::raw("› ").fg(DIM),
@@ -31,48 +34,101 @@ pub fn render(frame: &mut Frame, app: &App) {
     ]);
     frame.render_widget(
         Paragraph::new(path).style(Style::new().fg(FG).bg(BAR_BG)),
-        top,
+        area,
     );
+}
 
+fn render_body(frame: &mut Frame, app: &mut App, area: Rect) {
+    let message = match &app.listing {
+        Listing::Loading => "Loading…".to_string(),
+        Listing::Failed(err) => format!("Cannot open this folder: {err}"),
+        Listing::Ready(entries) if entries.is_empty() => "Folder is empty".to_string(),
+        Listing::Ready(entries) => {
+            frame.render_stateful_widget(
+                DetailedView::new(entries, format::now()),
+                area,
+                &mut app.table,
+            );
+            return;
+        }
+    };
     let [_, middle, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(1),
         Constraint::Fill(1),
     ])
-    .areas(body);
-    frame.render_widget(
-        Paragraph::new("skeleton is running").centered().fg(DIM),
-        middle,
-    );
+    .areas(area);
+    frame.render_widget(Paragraph::new(message).centered().fg(DIM), middle);
+}
 
-    let status_line = Line::from(vec![
-        Span::raw(" q ").bold(),
-        Span::raw("quit  ").fg(DIM),
-        Span::raw(app.last_input.as_str()).fg(DIM),
-    ]);
+fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let mut spans = Vec::new();
+    if let Some(count) = app.entry_count() {
+        spans.push(Span::raw(format!(" {}  ", format::items(count))).fg(FG));
+    }
+    spans.push(Span::raw(" q ").bold());
+    spans.push(Span::raw("quit").fg(DIM));
     frame.render_widget(
-        Paragraph::new(status_line).style(Style::new().fg(FG).bg(BAR_BG)),
-        status,
+        Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BAR_BG)),
+        area,
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use liman_core::{Entry, FileType};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use std::path::PathBuf;
+    use std::sync::mpsc;
+
+    fn rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect()
+            })
+            .collect()
+    }
 
     #[test]
-    fn shows_path_and_quit_hint() {
-        let mut terminal = Terminal::new(TestBackend::new(40, 5)).unwrap();
-        let app = App::new(PathBuf::from("/home/test"));
-        terminal.draw(|f| render(f, &app)).unwrap();
+    fn shows_path_loading_and_quit_hint() {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(PathBuf::from("/home/test"), tx);
+        let mut terminal = Terminal::new(TestBackend::new(50, 7)).unwrap();
+        terminal.draw(|f| render(f, &mut app)).unwrap();
 
-        let buffer = terminal.backend().buffer();
-        let row = |y: u16| -> String { (0..40).map(|x| buffer[(x, y)].symbol()).collect() };
-        assert!(row(0).contains("liman"));
-        assert!(row(0).contains("/home/test"));
-        assert!(row(4).contains("q quit"));
+        let rows = rows(&terminal);
+        assert!(rows[0].contains("liman") && rows[0].contains("/home/test"));
+        assert!(rows.iter().any(|r| r.contains("Loading")));
+        assert!(rows[6].contains("q quit"));
+    }
+
+    #[test]
+    fn shows_entries_and_count_when_ready() {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(PathBuf::from("/home/test"), tx);
+        app.listing = Listing::Ready(vec![Entry {
+            name: "main.rs".into(),
+            path: PathBuf::from("main.rs"),
+            is_dir: false,
+            is_symlink: false,
+            size: 13_800,
+            item_count: None,
+            modified: None,
+            file_type: FileType::Code,
+        }]);
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        let rows = rows(&terminal);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("RS") && r.contains("main.rs") && r.contains("13.8 kB"))
+        );
+        assert!(rows[7].contains("1 item"));
     }
 }
