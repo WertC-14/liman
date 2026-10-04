@@ -72,7 +72,6 @@ impl App {
                 .collect();
         }
         self.visible_entries()
-            .into_iter()
             .filter(|e| self.marked.contains(&e.path))
             .map(|e| e.path.clone())
             .collect()
@@ -90,11 +89,7 @@ impl App {
     }
 
     pub(super) fn mark_all(&mut self) {
-        self.marked = self
-            .visible_entries()
-            .iter()
-            .map(|e| e.path.clone())
-            .collect();
+        self.marked = self.visible_entries().map(|e| e.path.clone()).collect();
     }
 
     pub(super) fn copy_to_clipboard(&mut self, mode: ClipMode) {
@@ -399,11 +394,7 @@ mod tests {
     }
 
     fn select(app: &mut App, name: &str) {
-        let row = app
-            .visible_entries()
-            .iter()
-            .position(|e| e.name == name)
-            .unwrap();
+        let row = app.visible_entries().position(|e| e.name == name).unwrap();
         app.table.select(Some(row));
     }
 
@@ -523,7 +514,7 @@ mod tests {
         pump(&mut app, &rx, loaded);
         let results = app.results.clone().expect("results view");
         assert_eq!(results.count, 2);
-        assert_eq!(app.visible_entries()[0].name, "a.txt");
+        assert_eq!(app.visible_entry(0).unwrap().name, "a.txt");
 
         press(&mut app, KeyCode::Backspace); // back to the folder
         pump(&mut app, &rx, loaded);
@@ -625,7 +616,7 @@ mod tests {
         let (dir, mut app, rx) = setup("watch");
         fs::write(dir.join("new.txt"), "from outside").unwrap();
         pump(&mut app, &rx, |app| {
-            loaded(app) && app.visible_entries().iter().any(|e| e.name == "new.txt")
+            loaded(app) && app.visible_entries().any(|e| e.name == "new.txt")
         });
         fs::remove_dir_all(&dir).unwrap();
     }

@@ -418,11 +418,20 @@ impl App {
     }
 
     /// Entries currently shown, in display order.
-    pub fn visible_entries(&self) -> Vec<&Entry> {
-        match &self.listing {
-            Listing::Ready(entries) => self.visible.iter().map(|&i| &entries[i]).collect(),
-            _ => Vec::new(),
-        }
+    pub fn visible_entries(&self) -> impl Iterator<Item = &Entry> + '_ {
+        let entries: &[Entry] = match &self.listing {
+            Listing::Ready(entries) => entries,
+            _ => &[],
+        };
+        self.visible.iter().filter_map(|&i| entries.get(i))
+    }
+
+    /// The entry on display row `row`.
+    pub fn visible_entry(&self, row: usize) -> Option<&Entry> {
+        let Listing::Ready(entries) = &self.listing else {
+            return None;
+        };
+        self.visible.get(row).map(|&i| &entries[i])
     }
 
     pub fn selected_entry(&self) -> Option<&Entry> {
@@ -721,7 +730,9 @@ impl App {
         };
         // Ctrl+click: mark / unmark one; Shift+click: mark the range from the last click.
         if modifiers.contains(KeyModifiers::CONTROL) {
-            let path = self.visible_entries()[index].path.clone();
+            let Some(path) = self.visible_entry(index).map(|e| e.path.clone()) else {
+                return;
+            };
             if !self.marked.remove(&path) {
                 self.marked.insert(path);
             }
@@ -732,8 +743,10 @@ impl App {
         if modifiers.contains(KeyModifiers::SHIFT) {
             let anchor = self.click_anchor.or(self.table.selected()).unwrap_or(index);
             let (from, to) = (anchor.min(index), anchor.max(index));
-            let paths: Vec<_> = self.visible_entries()[from..=to]
-                .iter()
+            let paths: Vec<_> = self
+                .visible_entries()
+                .skip(from)
+                .take(to - from + 1)
                 .map(|e| e.path.clone())
                 .collect();
             self.marked.extend(paths);
@@ -774,8 +787,8 @@ impl App {
     fn open_context_menu(&mut self, column: u16, row: u16) {
         let items = match self.entry_at(column, row) {
             Some(index) => {
-                let path = &self.visible_entries()[index].path;
-                if !self.marked.contains(path) {
+                let path = self.visible_entry(index).map(|e| e.path.clone());
+                if path.is_some_and(|p| !self.marked.contains(&p)) {
                     self.marked.clear(); // right-click on an unmarked entry acts on that entry only
                 }
                 self.table.select(Some(index));
@@ -861,8 +874,7 @@ impl App {
         if !drag.active {
             return;
         }
-        let entries = self.visible_entries();
-        let Some(dragged) = entries.get(drag.from).map(|e| e.path.clone()) else {
+        let Some(dragged) = self.visible_entry(drag.from).map(|e| e.path.clone()) else {
             return;
         };
         let sources: Vec<PathBuf> = if self.marked.contains(&dragged) {
@@ -872,7 +884,7 @@ impl App {
         };
         let folder = self
             .entry_at(column, row)
-            .map(|i| entries[i])
+            .and_then(|i| self.visible_entry(i))
             .filter(|e| e.is_dir)
             .map(|e| e.path.clone())
             .or_else(|| {
@@ -1122,7 +1134,7 @@ impl App {
         self.visible_for.clear();
         self.refresh_visible();
         let row = keep
-            .and_then(|p| self.visible_entries().iter().position(|e| e.path == p))
+            .and_then(|p| self.visible_entries().position(|e| e.path == p))
             .unwrap_or(0);
         self.select_row(row);
     }
@@ -1450,7 +1462,7 @@ impl App {
         self.table = TableState::default();
         let came_from = self.select_after_load.take();
         let row = came_from
-            .and_then(|name| self.visible_entries().iter().position(|e| e.name == name))
+            .and_then(|name| self.visible_entries().position(|e| e.name == name))
             .unwrap_or(0);
         self.select_row(row);
         if self
@@ -1671,10 +1683,10 @@ mod tests {
     #[test]
     fn special_folders_are_marked_after_loading() {
         let (app, _rx) = app();
-        let music = app.visible_entries()[0];
+        let music = app.visible_entry(0).unwrap();
         assert_eq!(music.name, "Music");
         assert_eq!(music.special, Some(liman_core::SpecialDir::Music));
-        assert_eq!(app.visible_entries()[1].special, None);
+        assert_eq!(app.visible_entry(1).unwrap().special, None);
     }
 
     #[test]
@@ -1867,7 +1879,7 @@ mod tests {
             app.handle(ev);
         }
         assert_eq!(app.results.as_ref().unwrap().count, 1);
-        assert_eq!(app.visible_entries()[0].name, "sub/report.pdf");
+        assert_eq!(app.visible_entry(0).unwrap().name, "sub/report.pdf");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1935,11 +1947,7 @@ mod tests {
             key: liman_core::sort::SortKey::Type,
             descending: true,
         });
-        let names: Vec<_> = app
-            .visible_entries()
-            .iter()
-            .map(|e| e.name.clone())
-            .collect();
+        let names: Vec<_> = app.visible_entries().map(|e| e.name.clone()).collect();
         assert_eq!(names, ["Music", "Projects", "a.txt", "c.rs", "b.pdf"]);
         assert_eq!(selected_name(&app), "c.rs");
     }

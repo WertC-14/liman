@@ -16,6 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{StatefulWidget, TableState, Widget};
 
 use crate::boxes;
+use crate::rows::Rows;
 use crate::theme;
 
 /// Box sizes (width, height in cells) for the zoom levels, smallest first.
@@ -45,14 +46,14 @@ pub fn fitting_level(wanted: usize, area: Rect) -> usize {
 }
 
 pub struct GridView<'a> {
-    entries: &'a [&'a Entry],
+    entries: Rows<'a>,
     marked: Option<&'a HashSet<PathBuf>>,
     level: usize,
     git: Option<&'a HashMap<PathBuf, GitMark>>,
 }
 
 impl<'a> GridView<'a> {
-    pub fn new(entries: &'a [&'a Entry], level: usize) -> Self {
+    pub fn new(entries: Rows<'a>, level: usize) -> Self {
         Self {
             entries,
             marked: None,
@@ -119,13 +120,8 @@ impl StatefulWidget for GridView<'_> {
             }
         }
         let first = state.offset() * cols;
-        for (i, entry) in self
-            .entries
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take(visible_rows * cols)
-        {
+        let last = (first + visible_rows * cols).min(self.entries.len());
+        for (i, entry) in (first..last).filter_map(|i| Some((i, self.entries.get(i)?))) {
             let slot = i - first;
             let x = area.x + (slot % cols) as u16 * tile_w;
             let y = area.y + (slot / cols) as u16 * tile_h;
@@ -223,11 +219,10 @@ mod tests {
         let mut music = entry("Music", true);
         music.special = Some(SpecialDir::Music);
         let owned = [music, entry("Notes.pdf", false), entry("c.rs", false)];
-        let entries: Vec<&Entry> = owned.iter().collect();
         let area = Rect::new(0, 0, 32, 14); // level 0: tiles 16×7 → 2 columns, 2 rows
         let mut buf = Buffer::empty(area);
         let mut state = TableState::default().with_selected(Some(1));
-        GridView::new(&entries, 0).render(area, &mut buf, &mut state);
+        GridView::new(Rows::all(&owned), 0).render(area, &mut buf, &mut state);
 
         assert!(row(&buf, 0).starts_with("  ╭──╮"));
         assert!(row(&buf, 2).contains("♪"));
@@ -262,11 +257,10 @@ mod tests {
         let owned: Vec<Entry> = (0..20)
             .map(|i| entry(&format!("f{i}.txt"), false))
             .collect();
-        let entries: Vec<&Entry> = owned.iter().collect();
         let area = Rect::new(0, 0, 32, 14); // 2 columns, 2 visible rows
         let mut buf = Buffer::empty(area);
         let mut state = TableState::default().with_selected(Some(9)); // row 4
-        GridView::new(&entries, 0).render(area, &mut buf, &mut state);
+        GridView::new(Rows::all(&owned), 0).render(area, &mut buf, &mut state);
         assert_eq!(state.offset(), 3);
     }
 

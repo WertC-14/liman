@@ -611,11 +611,11 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
             app.drawn_view = fitting_view(app.view, area);
             // Borrow the fields directly (not through a method on `app`) so that `app.table`
             // can be borrowed mutably while `entries` is borrowed immutably.
-            let rows: Vec<_> = app.visible.iter().map(|&i| &entries[i]).collect();
+            let rows = liman_widgets::Rows::ordered(entries, &app.visible);
             let git_marks = app.git.as_ref().map(|g| &g.marks);
             match app.drawn_view.list_mode() {
                 Some(mode) => {
-                    let mut list = FileList::new(&rows, format::now(), mode)
+                    let mut list = FileList::new(rows, format::now(), mode)
                         .marked(&app.marked)
                         .sort(app.sort);
                     if let Some(marks) = git_marks {
@@ -626,7 +626,7 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 None => {
                     let wanted = app.grid_level.unwrap_or(grid::DEFAULT_LEVEL);
                     app.drawn_grid_level = grid::fitting_level(wanted, area);
-                    let mut grid = GridView::new(&rows, app.drawn_grid_level).marked(&app.marked);
+                    let mut grid = GridView::new(rows, app.drawn_grid_level).marked(&app.marked);
                     if let Some(marks) = git_marks {
                         grid = grid.git(marks);
                     }

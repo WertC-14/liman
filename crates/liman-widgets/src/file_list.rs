@@ -22,6 +22,7 @@ use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 
 use crate::boxes;
 use crate::gitmark;
+use crate::rows::Rows;
 use crate::theme;
 
 const COLUMN_SPACING: u16 = 2;
@@ -59,7 +60,7 @@ impl ListMode {
 }
 
 pub struct FileList<'a> {
-    entries: &'a [&'a Entry],
+    entries: Rows<'a>,
     now: Timestamp,
     mode: ListMode,
     marked: Option<&'a HashSet<PathBuf>>,
@@ -69,7 +70,7 @@ pub struct FileList<'a> {
 
 impl<'a> FileList<'a> {
     /// `entries` are the rows to show, already filtered and sorted by the caller.
-    pub fn new(entries: &'a [&'a Entry], now: Timestamp, mode: ListMode) -> Self {
+    pub fn new(entries: Rows<'a>, now: Timestamp, mode: ListMode) -> Self {
         Self {
             entries,
             now,
@@ -240,8 +241,8 @@ impl StatefulWidget for FileList<'_> {
         // Only the rows on screen are built (a folder with 20 000 files cost 100 ms per frame when
         // every row was built). We keep the scroll offset ourselves and hand `Table` just the window.
         let (start, end) = visible_window(state, self.entries.len(), area, self.mode);
-        let rows: Vec<_> = self.entries[start..end]
-            .iter()
+        let rows: Vec<_> = (start..end)
+            .filter_map(|i| self.entries.get(i))
             .map(|e| self.row(e))
             .collect();
         let mut window = TableState::default().with_selected(state.selected().map(|s| s - start));
@@ -389,13 +390,12 @@ mod tests {
             entry("Downloads", true, 0, Some(72)),
             entry("Notes.pdf", false, 17_100_000, None),
         ];
-        let entries: Vec<&Entry> = owned.iter().collect();
         let mut terminal = Terminal::new(TestBackend::new(60, height)).unwrap();
         let mut state = TableState::default().with_selected(Some(0));
         terminal
             .draw(|f| {
                 f.render_stateful_widget(
-                    FileList::new(&entries, format::now(), mode),
+                    FileList::new(Rows::all(&owned), format::now(), mode),
                     f.area(),
                     &mut state,
                 )
@@ -443,14 +443,14 @@ mod tests {
             entry("a.txt", false, 1, None),
             entry("b.txt", false, 1, None),
         ];
-        let entries: Vec<&Entry> = owned.iter().collect();
         let marked: HashSet<PathBuf> = [PathBuf::from("b.txt")].into();
         let mut terminal = Terminal::new(TestBackend::new(60, 4)).unwrap();
         let mut state = TableState::default().with_selected(Some(0));
         terminal
             .draw(|f| {
                 f.render_stateful_widget(
-                    FileList::new(&entries, format::now(), ListMode::Detailed).marked(&marked),
+                    FileList::new(Rows::all(&owned), format::now(), ListMode::Detailed)
+                        .marked(&marked),
                     f.area(),
                     &mut state,
                 )
