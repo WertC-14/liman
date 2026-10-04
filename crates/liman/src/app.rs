@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
-use liman_core::{Entry, ListOptions};
-use liman_widgets::DetailedView;
+use liman_core::{Entry, ListOptions, Place, Places};
+use liman_widgets::breadcrumb::{self, Segment};
+use liman_widgets::{DetailedView, Sidebar};
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -45,6 +46,12 @@ pub struct App {
     pub message: Option<String>,
     /// Where the list was drawn last frame, for mouse hit-testing. Written by the UI.
     pub list_area: Rect,
+    /// Where the sidebar was drawn last frame (empty when hidden). Written by the UI.
+    pub sidebar_area: Rect,
+    /// Where the path bar was drawn last frame. Written by the UI.
+    pub path_bar_area: Rect,
+    pub places: Places,
+    pub sidebar: Vec<Place>,
     /// Incremented on every listing request; older results are ignored.
     generation: u64,
     /// After going up a level, the folder we came from gets selected.
@@ -56,7 +63,7 @@ pub struct App {
 
 impl App {
     /// Creates the app and starts listing `cwd` in the background.
-    pub fn new(cwd: PathBuf, tx: Sender<AppEvent>) -> Self {
+    pub fn new(cwd: PathBuf, places: Places, tx: Sender<AppEvent>) -> Self {
         let mut app = Self {
             running: true,
             dirty: true,
@@ -68,6 +75,10 @@ impl App {
             filter_editing: false,
             message: None,
             list_area: Rect::default(),
+            sidebar_area: Rect::default(),
+            path_bar_area: Rect::default(),
+            sidebar: places.sidebar(),
+            places,
             generation: 0,
             select_after_load: None,
             last_click: None,
@@ -142,6 +153,7 @@ impl App {
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.activate_selected(),
             KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => self.go_up(),
             KeyCode::Char('/') => self.filter_editing = true,
+            KeyCode::Char('~') => self.load(self.places.home.clone()),
             _ => self.dirty = false,
         }
     }
@@ -183,6 +195,21 @@ impl App {
     }
 
     fn on_click(&mut self, column: u16, row: u16) {
+        if let Some(i) = Sidebar::row_at(self.sidebar_area, self.sidebar.len(), column, row) {
+            let path = self.sidebar[i].path.clone();
+            self.load(path);
+            return;
+        }
+        if row == self.path_bar_area.y {
+            let segments = self.path_segments();
+            if let Some(i) = breadcrumb::segment_at(&segments, self.path_bar_area.x, column) {
+                let path = segments[i].path.clone();
+                if path != self.cwd {
+                    self.load(path);
+                }
+            }
+            return;
+        }
         let Some(index) = DetailedView::row_at(self.list_area, self.table.offset(), column, row)
         else {
             return;
@@ -204,6 +231,10 @@ impl App {
     }
 
     // ---- navigation ----
+
+    pub fn path_segments(&self) -> Vec<Segment> {
+        breadcrumb::segments(&self.cwd, &self.places.home)
+    }
 
     fn page(&self) -> isize {
         // Visible rows minus the header; at least one.
@@ -281,7 +312,12 @@ impl App {
         }
         self.cwd = path;
         self.listing = match result {
-            Ok(entries) => Listing::Ready(entries),
+            Ok(mut entries) => {
+                for entry in entries.iter_mut().filter(|e| e.is_dir) {
+                    entry.special = self.places.kind_of(&entry.path);
+                }
+                Listing::Ready(entries)
+            }
             Err(err) => Listing::Failed(err),
         };
         self.refresh_visible();
@@ -307,6 +343,7 @@ mod tests {
     use super::*;
     use liman_core::FileType;
     use ratatui::crossterm::event::KeyEventState;
+    use std::path::Path;
     use std::sync::mpsc::{self, Receiver};
 
     fn key(code: KeyCode) -> AppEvent {
@@ -342,10 +379,15 @@ mod tests {
         }
     }
 
+    /// Home is /data, Music is the XDG music dir.
+    fn places() -> Places {
+        Places::from_user_dirs("XDG_MUSIC_DIR=\"$HOME/Music\"", Path::new("/data"))
+    }
+
     /// App showing /data with: Music/, Projects/, a.txt, b.pdf, c.rs
     fn app() -> (App, Receiver<AppEvent>) {
         let (tx, rx) = mpsc::channel();
-        let mut app = App::new(PathBuf::from("/data"), tx);
+        let mut app = App::new(PathBuf::from("/data"), places(), tx);
         let generation = app.generation;
         app.handle(AppEvent::Listing {
             generation,
@@ -358,7 +400,14 @@ mod tests {
                 entry("c.rs", false),
             ]),
         });
-        app.list_area = Rect::new(2, 2, 60, 10); // rows start at y = 4
+        app.list_area = Rect::new(24, 2, 60, 10); // rows start at y = 4
+        app.sidebar_area = Rect::new(0, 1, 22, 10);
+        app.sidebar = vec![Place {
+            name: "Home".into(),
+            path: PathBuf::from("/data"),
+            kind: liman_core::SpecialDir::Home,
+        }];
+        app.path_bar_area = Rect::new(0, 0, 80, 1);
         app.dirty = false;
         (app, rx)
     }
@@ -419,7 +468,7 @@ mod tests {
     #[test]
     fn going_up_selects_the_folder_we_came_from() {
         let (tx, _rx) = mpsc::channel();
-        let mut app = App::new(PathBuf::from("/data/Projects"), tx);
+        let mut app = App::new(PathBuf::from("/data/Projects"), places(), tx);
         app.handle(key(KeyCode::Backspace));
         let generation = app.generation;
         app.handle(AppEvent::Listing {
@@ -462,19 +511,56 @@ mod tests {
     #[test]
     fn click_selects_and_double_click_opens() {
         let (mut app, _rx) = app();
-        app.handle(click(10, 5)); // second row: Projects
+        app.handle(click(30, 5)); // second row: Projects
         assert_eq!(selected_name(&app), "Projects");
         assert!(matches!(app.listing, Listing::Ready(_)));
-        app.handle(click(10, 5));
+        app.handle(click(30, 5));
         assert!(matches!(app.listing, Listing::Loading));
     }
 
     #[test]
     fn clicks_outside_the_rows_are_ignored() {
         let (mut app, _rx) = app();
-        app.handle(click(10, 2)); // header
-        app.handle(click(10, 11)); // below the last entry
+        app.handle(click(30, 2)); // header
+        app.handle(click(30, 11)); // below the last entry
         assert_eq!(selected_name(&app), "Music");
+    }
+
+    #[test]
+    fn special_folders_are_marked_after_loading() {
+        let (app, _rx) = app();
+        let music = app.visible_entries()[0];
+        assert_eq!(music.name, "Music");
+        assert_eq!(music.special, Some(liman_core::SpecialDir::Music));
+        assert_eq!(app.visible_entries()[1].special, None);
+    }
+
+    #[test]
+    fn clicking_the_sidebar_or_path_bar_navigates() {
+        let (mut app, _rx) = app();
+        app.handle(click(5, 1)); // sidebar row 0: Home (/data)
+        assert!(matches!(app.listing, Listing::Loading));
+
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(PathBuf::from("/data/Projects"), places(), tx);
+        app.path_bar_area = Rect::new(0, 0, 80, 1);
+        let generation = app.generation;
+        app.handle(AppEvent::Listing {
+            generation,
+            path: PathBuf::from("/data/Projects"),
+            result: Ok(Vec::new()),
+        });
+        app.handle(click(3, 0)); // "⌂ Home"
+        assert!(matches!(app.listing, Listing::Loading));
+    }
+
+    #[test]
+    fn tilde_goes_home() {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(PathBuf::from("/data/Projects"), places(), tx);
+        app.handle(key(KeyCode::Char('~')));
+        let generation = app.generation;
+        assert_eq!(generation, 2);
     }
 
     #[test]
@@ -482,7 +568,7 @@ mod tests {
         let (mut app, _rx) = app();
         app.handle(AppEvent::Input(Event::Mouse(MouseEvent {
             kind: MouseEventKind::ScrollDown,
-            column: 10,
+            column: 30,
             row: 5,
             modifiers: KeyModifiers::NONE,
         })));

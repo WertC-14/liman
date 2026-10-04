@@ -7,7 +7,10 @@ mod ui;
 mod worker;
 
 use std::io;
+use std::path::PathBuf;
 use std::sync::mpsc;
+
+use liman_core::Places;
 
 use app::App;
 use tui::Tui;
@@ -17,7 +20,9 @@ fn main() -> io::Result<()> {
     let (tx, rx) = mpsc::channel();
     event::spawn_input_thread(tx.clone());
 
-    let mut app = App::new(std::env::current_dir()?, tx);
+    let cwd = std::env::current_dir()?;
+    let home = std::env::var_os("HOME").map_or_else(|| cwd.clone(), PathBuf::from);
+    let mut app = App::new(cwd, Places::detect(&home), tx);
     while app.running {
         // Draw only when something changed (dirty flag), never on a fixed tick.
         if app.dirty {
