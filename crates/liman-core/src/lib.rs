@@ -6,6 +6,7 @@ pub mod config;
 pub mod entry;
 pub mod file_type;
 pub mod format;
+pub mod git;
 pub mod job;
 pub mod listing;
 pub mod ops;
