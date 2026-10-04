@@ -190,7 +190,7 @@ impl Action {
         match self {
             Self::Open => "Enter",
             Self::PathsToTerminal => "Alt+Enter",
-            Self::OpenTerminalHere => "Tab",
+            Self::OpenTerminalHere => "F4",
             Self::Copy => "Ctrl+C",
             Self::Cut => "Ctrl+X",
             Self::Paste => "Ctrl+V",

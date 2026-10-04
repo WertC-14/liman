@@ -2043,6 +2043,19 @@ mod count_tests {
     use std::sync::mpsc;
 
     #[test]
+    fn tab_never_opens_a_closed_terminal() {
+        let dir = std::env::temp_dir();
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(dir.clone(), Places::from_user_dirs("", &dir), tx);
+        app.sidebar_area = Rect::new(0, 0, 20, 10); // sidebar visible
+        let tab = AppEvent::Input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        app.handle(tab);
+        assert!(app.terminal.is_none());
+        assert_eq!(app.term_mode, TermMode::Hidden);
+        assert_eq!(app.focus, Focus::Places);
+    }
+
+    #[test]
     fn folder_counts_arrive_after_the_listing() {
         let dir = std::env::temp_dir().join(format!("liman-counts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

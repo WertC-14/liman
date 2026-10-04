@@ -72,7 +72,10 @@ impl App {
     pub(super) fn focus_next(&mut self) {
         match self.focus {
             Focus::Places => self.focus = Focus::Files,
-            Focus::Files if self.term_mode == TermMode::Hidden => self.toggle_panel(),
+            // A closed terminal is skipped, never opened by Tab (F4 opens it).
+            Focus::Files if self.term_mode == TermMode::Hidden => {
+                self.focus = self.places_or_files()
+            }
             Focus::Files => self.focus = Focus::Terminal,
             Focus::Terminal => self.focus = self.places_or_files(),
         }
