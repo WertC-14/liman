@@ -127,6 +127,11 @@ impl IconTheme {
         })
     }
 
+    /// No theme at all: every lookup misses (tests, or forcing liman's own icons).
+    pub fn empty() -> Self {
+        Self { chain: Vec::new() }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.chain.is_empty()
     }

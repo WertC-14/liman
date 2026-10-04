@@ -2,6 +2,7 @@
 //!
 //!     cargo run -p liman-core --example icons
 //!     LIMAN_ICON_THEME=kora cargo run -p liman-core --example icons
+//!     cargo run -p liman-core --example icons -- --embedded    # liman's own set only
 
 use std::path::PathBuf;
 
@@ -11,7 +12,12 @@ fn main() {
     let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
     let name = detect_theme_name(&home);
     println!("theme: {}", name.as_deref().unwrap_or("(none)"));
-    let theme = IconTheme::load(name.as_deref(), &home);
+    let theme = if std::env::args().any(|a| a == "--embedded") {
+        println!("using liman's embedded icons only");
+        IconTheme::empty()
+    } else {
+        IconTheme::load(name.as_deref(), &home)
+    };
 
     for names in [
         &["folder-download", "folder"][..],
