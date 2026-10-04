@@ -43,9 +43,14 @@ fn render_body(frame: &mut Frame, app: &mut App, area: Rect) {
         Listing::Loading => "Loading…".to_string(),
         Listing::Failed(err) => format!("Cannot open this folder: {err}"),
         Listing::Ready(entries) if entries.is_empty() => "Folder is empty".to_string(),
+        Listing::Ready(_) if app.visible.is_empty() => format!("Nothing matches “{}”", app.filter),
         Listing::Ready(entries) => {
+            app.list_area = area;
+            // Borrow the fields directly (not through a method on `app`) so that `app.table`
+            // can be borrowed mutably while `entries` is borrowed immutably.
+            let rows: Vec<_> = app.visible.iter().map(|&i| &entries[i]).collect();
             frame.render_stateful_widget(
-                DetailedView::new(entries, format::now()),
+                DetailedView::new(&rows, format::now()),
                 area,
                 &mut app.table,
             );
@@ -63,11 +68,34 @@ fn render_body(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = Vec::new();
+    if app.filter_editing || !app.filter.is_empty() {
+        spans.push(Span::raw(format!(" /{}", app.filter)).fg(FG).bold());
+        if app.filter_editing {
+            spans.push(Span::raw("▏").fg(FG));
+        }
+        spans.push(Span::raw("  "));
+    }
     if let Some(count) = app.entry_count() {
         spans.push(Span::raw(format!(" {}  ", format::items(count))).fg(FG));
     }
-    spans.push(Span::raw(" q ").bold());
-    spans.push(Span::raw("quit").fg(DIM));
+    if let Some(message) = &app.message {
+        spans.push(Span::raw(format!("{message}  ")).fg(FG));
+    }
+    let hints: &[(&str, &str)] = if app.filter_editing {
+        &[("Enter", "keep filter"), ("Esc", "clear")]
+    } else {
+        &[
+            ("↑↓", "move"),
+            ("Enter", "open"),
+            ("⌫", "up"),
+            ("/", "filter"),
+            ("q", "quit"),
+        ]
+    };
+    for (key, what) in hints {
+        spans.push(Span::raw(format!(" {key} ")).bold());
+        spans.push(Span::raw(format!("{what} ")).fg(DIM));
+    }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BAR_BG)),
         area,
@@ -105,6 +133,7 @@ mod tests {
         assert!(rows[0].contains("liman") && rows[0].contains("/home/test"));
         assert!(rows.iter().any(|r| r.contains("Loading")));
         assert!(rows[6].contains("q quit"));
+        assert!(rows[6].contains("/ filter"));
     }
 
     #[test]
@@ -121,6 +150,7 @@ mod tests {
             modified: None,
             file_type: FileType::Code,
         }]);
+        app.visible = vec![0];
         let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
         terminal.draw(|f| render(f, &mut app)).unwrap();
 

@@ -15,14 +15,29 @@ use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 use crate::badge::{self, badge};
 use crate::theme::{DIM, FG, SELECTED_BG};
 
+/// Rows taken by the header line and the blank line under it.
+pub const HEADER_HEIGHT: u16 = 2;
+
 pub struct DetailedView<'a> {
-    entries: &'a [Entry],
+    entries: &'a [&'a Entry],
     now: Timestamp,
 }
 
 impl<'a> DetailedView<'a> {
-    pub fn new(entries: &'a [Entry], now: Timestamp) -> Self {
+    /// `entries` are the rows to show, already filtered and sorted by the caller.
+    pub fn new(entries: &'a [&'a Entry], now: Timestamp) -> Self {
         Self { entries, now }
+    }
+
+    /// Hit-testing for mouse clicks: which row index sits at terminal cell (`column`, `row`)
+    /// when the view was rendered into `area` with scroll `offset`. The caller checks the
+    /// result against the number of rows.
+    pub fn row_at(area: Rect, offset: usize, column: u16, row: u16) -> Option<usize> {
+        let inside = column >= area.x
+            && column < area.right()
+            && row >= area.y + HEADER_HEIGHT
+            && row < area.bottom();
+        inside.then(|| offset + usize::from(row - area.y - HEADER_HEIGHT))
     }
 }
 
@@ -39,7 +54,7 @@ impl StatefulWidget for DetailedView<'_> {
         .style(Style::new().fg(DIM))
         .bottom_margin(1);
 
-        let rows = self.entries.iter().map(|entry| {
+        let rows = self.entries.iter().map(|&entry| {
             let name = if entry.is_symlink {
                 Line::from(vec![
                     Span::raw(entry.name.as_str()),
@@ -113,10 +128,11 @@ mod tests {
 
     #[test]
     fn renders_header_and_rows() {
-        let entries = [
+        let owned = [
             entry("Downloads", true, 0, Some(72)),
             entry("Notes.pdf", false, 17_100_000, None),
         ];
+        let entries: Vec<&Entry> = owned.iter().collect();
         let mut terminal = Terminal::new(TestBackend::new(60, 5)).unwrap();
         let mut state = TableState::default().with_selected(Some(0));
         terminal
@@ -140,5 +156,16 @@ mod tests {
         );
         // Selected row is highlighted.
         assert_eq!(buffer[(20, 2)].bg, SELECTED_BG);
+    }
+
+    #[test]
+    fn row_at_skips_header_and_adds_offset() {
+        let area = Rect::new(2, 3, 40, 10);
+        assert_eq!(DetailedView::row_at(area, 0, 10, 3), None); // header
+        assert_eq!(DetailedView::row_at(area, 0, 10, 4), None); // blank line under header
+        assert_eq!(DetailedView::row_at(area, 0, 10, 5), Some(0));
+        assert_eq!(DetailedView::row_at(area, 7, 10, 6), Some(8));
+        assert_eq!(DetailedView::row_at(area, 0, 1, 6), None); // left of the area
+        assert_eq!(DetailedView::row_at(area, 0, 10, 13), None); // below the area
     }
 }
