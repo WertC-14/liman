@@ -143,6 +143,10 @@ pub struct App {
     dragging_panel: bool,
     /// The large view `v` returns to from the compact list.
     last_large_view: View,
+    /// Ctrl+F: the search text being typed.
+    pub search_input: Option<String>,
+    /// Newest listing/search id, shared with search workers so old searches stop early.
+    current_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// `t`: the theme list (selected row, theme to go back to on Esc).
     pub theme_picker: Option<(usize, usize)>,
     /// `?`: the shortcut overview.
@@ -205,6 +209,8 @@ impl App {
             last_large_view: View::Grid,
             results: None,
             theme_picker: None,
+            search_input: None,
+            current_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             help_open: false,
             picker_area: Rect::default(),
             results_pending: None,
@@ -256,6 +262,8 @@ impl App {
             self.remembered.insert(self.cwd.clone(), entry.name.clone());
         }
         self.generation += 1;
+        self.current_generation
+            .store(self.generation, std::sync::atomic::Ordering::Relaxed);
         self.listing = Listing::Loading;
         self.visible.clear();
         self.marked.clear();
@@ -353,6 +361,9 @@ impl App {
             self.on_rename_key(key);
             return;
         }
+        if self.search_input.is_some() {
+            return self.on_search_key(key);
+        }
         if self.filter_editing {
             self.on_filter_key(key);
             return;
@@ -382,6 +393,7 @@ impl App {
             KeyCode::Enter if alt => self.paths_to_terminal(),
             KeyCode::Char('h') if ctrl => self.toggle_hidden(),
             KeyCode::Char('.') => self.toggle_hidden(),
+            KeyCode::Char('f') if ctrl => self.search_input = Some(String::new()),
             // In the grid, left/right move between tiles and up/down jump a row (like Nautilus).
             KeyCode::Right | KeyCode::Char('l') if self.drawn_view == View::Grid => {
                 self.move_selection(1)
@@ -838,6 +850,42 @@ impl App {
         self.load_results(results, out.cwd, paths);
     }
 
+    fn on_search_key(&mut self, key: KeyEvent) {
+        let Some(text) = &mut self.search_input else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.search_input = None,
+            KeyCode::Backspace => {
+                text.pop();
+            }
+            KeyCode::Char(c) => text.push(c),
+            KeyCode::Enter => {
+                let needle = self.search_input.take().unwrap_or_default();
+                if needle.is_empty() {
+                    return;
+                }
+                // Search the folder itself, not inside a previous result list.
+                let base = self.cwd.clone();
+                self.results_pending = Some(Results {
+                    command: format!("search “{needle}”"),
+                    count: 0, // filled in when the listing arrives
+                });
+                self.load_from_shell = true;
+                self.start_loading(&base);
+                worker::spawn_search(
+                    self.tx.clone(),
+                    self.generation,
+                    self.current_generation.clone(),
+                    base,
+                    needle,
+                    self.options.show_hidden,
+                );
+            }
+            _ => {}
+        }
+    }
+
     fn go_back(&mut self) {
         if let Some(path) = self.back_stack.pop() {
             self.forward_stack.push(self.cwd.clone());
@@ -903,6 +951,9 @@ impl App {
         }
         self.loading_path = None;
         self.results = self.results_pending.take();
+        if let (Some(results), Ok(entries)) = (&mut self.results, &result) {
+            results.count = entries.len();
+        }
         let from_shell = std::mem::take(&mut self.load_from_shell);
         if result.is_ok() {
             self.sync_shell_to(&path, from_shell);
@@ -1321,6 +1372,33 @@ mod tests {
         assert_eq!(app.cwd, PathBuf::from("/data/Projects"));
         assert!(app.forward_stack.is_empty());
         assert_eq!(app.back_stack, [PathBuf::from("/data")]);
+    }
+
+    #[test]
+    fn ctrl_f_searches_subfolders_into_a_results_view() {
+        let dir = std::env::temp_dir().join(format!("liman-ctrlf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub/report.pdf"), "x").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let mut app = App::new(dir.clone(), Places::from_user_dirs("", &dir), tx);
+        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Char('f'),
+            KeyModifiers::CONTROL,
+        ))));
+        for c in "REPORT".chars() {
+            app.handle(key(KeyCode::Char(c)));
+        }
+        app.handle(key(KeyCode::Enter));
+        while app.results.is_none() {
+            let ev = rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("search result");
+            app.handle(ev);
+        }
+        assert_eq!(app.results.as_ref().unwrap().count, 1);
+        assert_eq!(app.visible_entries()[0].name, "sub/report.pdf");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

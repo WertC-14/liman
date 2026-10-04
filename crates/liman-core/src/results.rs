@@ -129,3 +129,67 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 }
+
+/// Files and folders under `root` whose name contains `needle` (case-insensitive), breadth-first so
+/// near matches come first. Symlinked folders are not entered. Stops at [`MAX_RESULTS`] or when
+/// `cancelled()` returns true (a newer search or another folder was opened).
+pub fn search_names(
+    root: &Path,
+    needle: &str,
+    show_hidden: bool,
+    cancelled: &dyn Fn() -> bool,
+) -> Vec<PathBuf> {
+    let needle = needle.to_lowercase();
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::from([root.to_path_buf()]);
+    while let Some(dir) = queue.pop_front() {
+        if cancelled() {
+            break;
+        }
+        let Ok(items) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for item in items.flatten() {
+            let name = item.file_name().to_string_lossy().into_owned();
+            if !show_hidden && name.starts_with('.') {
+                continue;
+            }
+            let path = item.path();
+            if name.to_lowercase().contains(&needle) {
+                out.push(path.clone());
+                if out.len() == MAX_RESULTS {
+                    return out;
+                }
+            }
+            if item.file_type().is_ok_and(|t| t.is_dir()) {
+                queue.push_back(path);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    use crate::ops::test_dir;
+    use std::fs;
+
+    #[test]
+    fn finds_names_in_subfolders_breadth_first() {
+        let dir = test_dir("search");
+        fs::create_dir_all(dir.join("a/deep")).unwrap();
+        fs::create_dir_all(dir.join(".hidden")).unwrap();
+        fs::write(dir.join("Notes.md"), "").unwrap();
+        fs::write(dir.join("a/deep/notes-old.md"), "").unwrap();
+        fs::write(dir.join(".hidden/notes.md"), "").unwrap();
+        let found = search_names(&dir, "NOTES", false, &|| false);
+        assert_eq!(
+            found,
+            [dir.join("Notes.md"), dir.join("a/deep/notes-old.md")]
+        );
+        assert_eq!(search_names(&dir, "notes", true, &|| false).len(), 3);
+        assert!(search_names(&dir, "notes", false, &|| true).is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}

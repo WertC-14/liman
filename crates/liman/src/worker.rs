@@ -53,3 +53,29 @@ pub fn spawn_results(tx: Sender<AppEvent>, generation: u64, base: PathBuf, paths
         });
     });
 }
+
+/// Searches names under `root` (Ctrl+F). `current` holds the newest search id; an older search
+/// sees it change and stops early.
+pub fn spawn_search(
+    tx: Sender<AppEvent>,
+    generation: u64,
+    current: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    root: PathBuf,
+    needle: String,
+    show_hidden: bool,
+) {
+    use std::sync::atomic::Ordering;
+    thread::spawn(move || {
+        let cancelled = || current.load(Ordering::Relaxed) != generation;
+        let paths = liman_core::results::search_names(&root, &needle, show_hidden, &cancelled);
+        if cancelled() {
+            return;
+        }
+        let entries = liman_core::results::entries_for(&paths, &root);
+        let _ = tx.send(AppEvent::Listing {
+            generation,
+            path: root,
+            result: Ok(entries),
+        });
+    });
+}

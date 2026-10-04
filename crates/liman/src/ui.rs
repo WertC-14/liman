@@ -81,6 +81,7 @@ fn render_help(frame: &mut Frame) {
         ("v", "small list ↔ large view"),
         ("+ / -  (Ctrl+wheel)", "zoom"),
         ("/", "filter"),
+        ("Ctrl+F", "search in subfolders"),
         ("Ctrl+H / .", "hidden files"),
         ("s / S  (header click)", "sort by / reverse"),
         ("Space / Ctrl+A", "mark / mark all"),
@@ -375,6 +376,18 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::from(spans))
                 .style(Style::new().fg(theme::fg()).bg(theme::bar_bg())),
+            area,
+        );
+        return;
+    }
+    if let Some(text) = &app.search_input {
+        let line = Line::from(vec![
+            Span::raw(" ⌕ Search in this folder and below: ").fg(theme::dim()),
+            Span::raw(text.clone()).fg(theme::fg()).bold(),
+            Span::raw("▏   Enter search · Esc cancel").fg(theme::dim()),
+        ]);
+        frame.render_widget(
+            Paragraph::new(line).style(Style::new().bg(theme::bar_bg())),
             area,
         );
         return;
