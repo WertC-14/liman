@@ -3,7 +3,7 @@
 
 use liman_core::format;
 use liman_widgets::theme::{BAR_BG, BG, DIM, FG};
-use liman_widgets::{DetailedView, Sidebar, breadcrumb, sidebar};
+use liman_widgets::{FileList, ListMode, Sidebar, breadcrumb, sidebar};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Style, Stylize};
@@ -61,7 +61,7 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
             // can be borrowed mutably while `entries` is borrowed immutably.
             let rows: Vec<_> = app.visible.iter().map(|&i| &entries[i]).collect();
             frame.render_stateful_widget(
-                DetailedView::new(&rows, format::now()),
+                FileList::new(&rows, format::now(), ListMode::Detailed),
                 area,
                 &mut app.table,
             );

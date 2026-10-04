@@ -1,0 +1,253 @@
+//! The file list in two of the three views (ADR 0003):
+//! - **Detailed**: one line per entry — badge, name, size, modified.
+//! - **Normal**: a type-colored box per entry (4 lines), name and details on the box's label line.
+//!
+//! Built on ratatui's `Table`, which handles selection highlight and scrolling for rows of any height.
+//! It is a `StatefulWidget`: the caller keeps a `TableState` (selected row, scroll offset)
+//! between frames, the widget itself is rebuilt every frame.
+
+use liman_core::Entry;
+use liman_core::format::{self, Timestamp};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Rect};
+use ratatui::style::{Style, Stylize};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
+
+use crate::badge::{self, badge};
+use crate::boxes;
+use crate::theme::{DIM, FG, SELECTED_BG};
+
+/// Rows taken by the header line and the blank line under it.
+pub const HEADER_HEIGHT: u16 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListMode {
+    Detailed,
+    Normal,
+}
+
+impl ListMode {
+    /// Terminal rows one entry takes, including the gap below it.
+    pub const fn row_height(self) -> u16 {
+        match self {
+            Self::Detailed => 1,
+            Self::Normal => boxes::HEIGHT + 1,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Detailed => "Detailed",
+            Self::Normal => "Normal",
+        }
+    }
+}
+
+pub struct FileList<'a> {
+    entries: &'a [&'a Entry],
+    now: Timestamp,
+    mode: ListMode,
+}
+
+impl<'a> FileList<'a> {
+    /// `entries` are the rows to show, already filtered and sorted by the caller.
+    pub fn new(entries: &'a [&'a Entry], now: Timestamp, mode: ListMode) -> Self {
+        Self { entries, now, mode }
+    }
+
+    /// Hit-testing for mouse clicks: which row index sits at terminal cell (`column`, `row`)
+    /// when the list was rendered into `area` with scroll `offset` in `mode`. The caller checks
+    /// the result against the number of rows.
+    pub fn row_at(
+        area: Rect,
+        offset: usize,
+        mode: ListMode,
+        column: u16,
+        row: u16,
+    ) -> Option<usize> {
+        let inside = column >= area.x
+            && column < area.right()
+            && row >= area.y + HEADER_HEIGHT
+            && row < area.bottom();
+        let line = row.checked_sub(area.y + HEADER_HEIGHT)?;
+        let height = mode.row_height();
+        // The gap line under a box belongs to no entry.
+        let on_gap = mode == ListMode::Normal && line % height == height - 1;
+        (inside && !on_gap).then(|| offset + usize::from(line / height))
+    }
+
+    fn row(&self, entry: &Entry) -> Row<'static> {
+        let name = if entry.is_symlink {
+            Line::from(vec![Span::raw(entry.name.clone()), Span::raw(" ↗").fg(DIM)])
+        } else {
+            Line::from(entry.name.clone())
+        };
+        let size = Line::from(size_text(entry)).right_aligned().fg(DIM);
+        let modified = Line::from(self.modified_text(entry))
+            .right_aligned()
+            .fg(DIM);
+        match self.mode {
+            ListMode::Detailed => Row::new([
+                Cell::from(badge(entry)),
+                Cell::from(name.fg(FG)),
+                Cell::from(size),
+                Cell::from(modified),
+            ]),
+            ListMode::Normal => Row::new([
+                Cell::from(boxes::render(entry)),
+                Cell::from(on_label_line(name.fg(FG))),
+                Cell::from(on_label_line(size)),
+                Cell::from(on_label_line(modified)),
+            ])
+            .height(boxes::HEIGHT)
+            .bottom_margin(1),
+        }
+    }
+
+    fn modified_text(&self, entry: &Entry) -> String {
+        entry
+            .modified
+            .map_or_else(String::new, |t| format::modified(t, self.now))
+    }
+}
+
+/// Pushes a single line down to the box's label line.
+fn on_label_line(line: Line<'static>) -> Text<'static> {
+    let mut lines = vec![Line::default(); boxes::LABEL_LINE];
+    lines.push(line);
+    Text::from(lines)
+}
+
+impl StatefulWidget for FileList<'_> {
+    type State = TableState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut TableState) {
+        let header = Row::new([
+            Cell::from(""),
+            Cell::from("Name"),
+            Cell::from(Line::from("Size").right_aligned()),
+            Cell::from(Line::from("Modified").right_aligned()),
+        ])
+        .style(Style::new().fg(DIM))
+        .bottom_margin(1);
+
+        let icon_width = match self.mode {
+            ListMode::Detailed => badge::WIDTH,
+            ListMode::Normal => boxes::WIDTH,
+        };
+        let widths = [
+            Constraint::Length(icon_width),
+            Constraint::Fill(1),
+            Constraint::Length(10),
+            Constraint::Length(16),
+        ];
+        let rows: Vec<_> = self.entries.iter().map(|e| self.row(e)).collect();
+        let table = Table::new(rows, widths)
+            .header(header)
+            .column_spacing(2)
+            .row_highlight_style(Style::new().bg(SELECTED_BG));
+        StatefulWidget::render(table, area, buf, state);
+    }
+}
+
+fn size_text(entry: &Entry) -> String {
+    if entry.is_dir {
+        entry.item_count.map_or_else(|| "—".into(), format::items)
+    } else {
+        format::size(entry.size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liman_core::FileType;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use std::path::PathBuf;
+
+    fn entry(name: &str, is_dir: bool, size: u64, items: Option<usize>) -> Entry {
+        Entry {
+            name: name.into(),
+            path: PathBuf::from(name),
+            is_dir,
+            is_symlink: false,
+            special: None,
+            size,
+            item_count: items,
+            modified: None,
+            file_type: FileType::from_path(&PathBuf::from(name), is_dir),
+        }
+    }
+
+    fn draw(mode: ListMode, height: u16) -> Vec<String> {
+        let owned = [
+            entry("Downloads", true, 0, Some(72)),
+            entry("Notes.pdf", false, 17_100_000, None),
+        ];
+        let entries: Vec<&Entry> = owned.iter().collect();
+        let mut terminal = Terminal::new(TestBackend::new(60, height)).unwrap();
+        let mut state = TableState::default().with_selected(Some(0));
+        terminal
+            .draw(|f| {
+                f.render_stateful_widget(
+                    FileList::new(&entries, format::now(), mode),
+                    f.area(),
+                    &mut state,
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn detailed_renders_header_and_one_line_per_entry() {
+        let rows = draw(ListMode::Detailed, 5);
+        assert!(rows[0].contains("Name") && rows[0].contains("Size"));
+        assert!(
+            rows[2].contains("▸") && rows[2].contains("Downloads") && rows[2].contains("72 items")
+        );
+        assert!(
+            rows[3].contains("PDF") && rows[3].contains("Notes.pdf") && rows[3].contains("17.1 MB")
+        );
+    }
+
+    #[test]
+    fn normal_renders_boxes_with_details_on_the_label_line() {
+        let rows = draw(ListMode::Normal, 13);
+        // header (0), blank (1), folder box (2..=5), gap (6), file box (7..=10)
+        assert!(rows[2].starts_with("╭─╮"));
+        assert!(rows[4].contains("Downloads") && rows[4].contains("72 items"));
+        assert!(
+            rows[9].contains("PDF") && rows[9].contains("Notes.pdf") && rows[9].contains("17.1 MB")
+        );
+        assert!(rows[6].trim().is_empty());
+    }
+
+    #[test]
+    fn row_at_detailed() {
+        let area = Rect::new(2, 3, 40, 10);
+        let at = |offset, row| FileList::row_at(area, offset, ListMode::Detailed, 10, row);
+        assert_eq!(at(0, 3), None); // header
+        assert_eq!(at(0, 4), None); // blank line under header
+        assert_eq!(at(0, 5), Some(0));
+        assert_eq!(at(7, 6), Some(8));
+        assert_eq!(FileList::row_at(area, 0, ListMode::Detailed, 1, 6), None); // left of the area
+        assert_eq!(at(0, 13), None); // below the area
+    }
+
+    #[test]
+    fn row_at_normal_skips_the_gap_lines() {
+        let area = Rect::new(0, 0, 40, 30);
+        let at = |offset, row| FileList::row_at(area, offset, ListMode::Normal, 5, row);
+        assert_eq!(at(0, 2), Some(0)); // first line of the first box
+        assert_eq!(at(0, 5), Some(0)); // last line of the first box
+        assert_eq!(at(0, 6), None); // gap
+        assert_eq!(at(0, 7), Some(1));
+        assert_eq!(at(3, 7), Some(4));
+    }
+}

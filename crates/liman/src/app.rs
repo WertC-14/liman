@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use liman_core::{Entry, ListOptions, Place, Places};
 use liman_widgets::breadcrumb::{self, Segment};
-use liman_widgets::{DetailedView, Sidebar};
+use liman_widgets::{FileList, ListMode, Sidebar};
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -210,8 +210,13 @@ impl App {
             }
             return;
         }
-        let Some(index) = DetailedView::row_at(self.list_area, self.table.offset(), column, row)
-        else {
+        let Some(index) = FileList::row_at(
+            self.list_area,
+            self.table.offset(),
+            ListMode::Detailed,
+            column,
+            row,
+        ) else {
             return;
         };
         if index >= self.visible.len() {
