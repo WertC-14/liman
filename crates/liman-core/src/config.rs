@@ -36,6 +36,32 @@ pub fn set(file: &Path, key: &str, value: &str) -> io::Result<()> {
     fs::write(file, format!("# liman settings\n{text}"))
 }
 
+/// Bookmarked folders, one path per line, in `$XDG_CONFIG_HOME/liman/bookmarks`.
+pub fn bookmarks_path(home: &Path) -> PathBuf {
+    path(home).with_file_name("bookmarks")
+}
+
+pub fn load_bookmarks(file: &Path) -> Vec<PathBuf> {
+    fs::read_to_string(file)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(PathBuf::from)
+        .collect()
+}
+
+pub fn save_bookmarks(file: &Path, bookmarks: &[PathBuf]) -> io::Result<()> {
+    if let Some(dir) = file.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let text: String = bookmarks
+        .iter()
+        .map(|p| format!("{}\n", p.display()))
+        .collect();
+    fs::write(file, text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

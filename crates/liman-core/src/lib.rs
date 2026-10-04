@@ -10,6 +10,7 @@ pub mod job;
 pub mod listing;
 pub mod ops;
 pub mod places;
+pub mod recent;
 pub mod results;
 pub mod sort;
 pub mod trash;

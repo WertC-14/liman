@@ -150,6 +150,7 @@ fn render_help(frame: &mut Frame) {
         ("+ / -  (Ctrl+wheel)", "zoom"),
         ("/", "filter"),
         ("Ctrl+F", "search in subfolders"),
+        ("Ctrl+D", "bookmark folder (again: remove)"),
         ("Ctrl+H / .", "hidden files"),
         ("s / S  (header click)", "sort by / reverse"),
         ("Space / Ctrl+A", "mark / mark all"),

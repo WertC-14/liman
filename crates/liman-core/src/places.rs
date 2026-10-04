@@ -17,6 +17,10 @@ pub enum SpecialDir {
     Public,
     Trash,
     Root,
+    /// A folder the user bookmarked (Ctrl+D).
+    Bookmark,
+    /// Recently used files (not a folder: opens a list).
+    Recent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +65,38 @@ impl Places {
             .map(|(kind, _)| *kind)
     }
 
+    /// Sidebar with the user's bookmarks: Home, Recent, XDG folders, bookmarks, Trash, Computer.
+    pub fn sidebar_with(&self, bookmarks: &[PathBuf]) -> Vec<Place> {
+        let mut places = self.sidebar();
+        let after_home = places
+            .iter()
+            .position(|p| p.kind == SpecialDir::Home)
+            .map_or(0, |i| i + 1);
+        places.insert(
+            after_home,
+            Place {
+                name: "Recent".into(),
+                path: PathBuf::from("recent:///"),
+                kind: SpecialDir::Recent,
+            },
+        );
+        let before_trash = places
+            .iter()
+            .position(|p| p.kind == SpecialDir::Trash)
+            .unwrap_or(places.len());
+        for (i, path) in bookmarks.iter().enumerate() {
+            places.insert(
+                before_trash + i,
+                Place {
+                    name: display_name(SpecialDir::Bookmark, path),
+                    path: path.clone(),
+                    kind: SpecialDir::Bookmark,
+                },
+            );
+        }
+        places
+    }
+
     /// Sidebar entries in GUI order. Templates and Public are left out (Nautilus does the same);
     /// XDG dirs that do not exist or point to the home folder itself are skipped.
     pub fn sidebar(&self) -> Vec<Place> {
@@ -90,6 +126,7 @@ fn display_name(kind: SpecialDir, path: &Path) -> String {
     match kind {
         SpecialDir::Home => "Home".into(),
         SpecialDir::Trash => "Trash".into(),
+        SpecialDir::Recent => "Recent".into(),
         SpecialDir::Root => "Computer".into(),
         _ => path.file_name().map_or_else(
             || path.display().to_string(),

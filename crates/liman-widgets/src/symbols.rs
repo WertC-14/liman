@@ -17,5 +17,7 @@ pub fn special_dir(kind: SpecialDir) -> &'static str {
         SpecialDir::Public => "⊚",
         SpecialDir::Trash => "✕",
         SpecialDir::Root => "/",
+        SpecialDir::Bookmark => "★",
+        SpecialDir::Recent => "↺",
     }
 }

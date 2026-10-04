@@ -118,6 +118,8 @@ pub struct App {
     pub path_bar_area: Rect,
     pub places: Places,
     pub sidebar: Vec<Place>,
+    /// Folders bookmarked with Ctrl+D (shown in Places with ★).
+    pub bookmarks: Vec<PathBuf>,
     /// Entries marked with Space (or Ctrl+A) for a multi-item operation.
     pub marked: HashSet<PathBuf>,
     pub clipboard: Option<Clipboard>,
@@ -224,7 +226,8 @@ impl App {
             sidebar_area: Rect::default(),
             sidebar_selected: 0,
             path_bar_area: Rect::default(),
-            sidebar: places.sidebar(),
+            sidebar: places.sidebar_with(&[]),
+            bookmarks: Vec::new(),
             marked: HashSet::new(),
             clipboard: None,
             job: None,
@@ -401,6 +404,7 @@ impl App {
             KeyCode::Char('h') if ctrl => self.toggle_hidden(),
             KeyCode::Char('.') => self.toggle_hidden(),
             KeyCode::Char('f') if ctrl => self.search_input = Some(String::new()),
+            KeyCode::Char('d') if ctrl => self.toggle_bookmark(),
             // In the grid, left/right move between tiles and up/down jump a row (like Nautilus).
             KeyCode::Right | KeyCode::Char('l') if self.drawn_view == View::Grid => {
                 self.move_selection(1)
@@ -525,8 +529,7 @@ impl App {
         }
         if let Some(i) = Sidebar::row_at(self.sidebar_area, self.sidebar.len(), column, row) {
             self.sidebar_selected = i;
-            let path = self.sidebar[i].path.clone();
-            self.load(path);
+            self.open_place(i);
             return;
         }
         if row == self.path_bar_area.y {
@@ -611,10 +614,17 @@ impl App {
             }
             KeyCode::Home | KeyCode::Char('g') => self.sidebar_selected = 0,
             KeyCode::End | KeyCode::Char('G') => self.sidebar_selected = last,
-            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-                if let Some(place) = self.sidebar.get(self.sidebar_selected) {
+            KeyCode::Delete => {
+                if let Some(place) = self.sidebar.get(self.sidebar_selected)
+                    && place.kind == liman_core::SpecialDir::Bookmark
+                {
                     let path = place.path.clone();
-                    self.load(path);
+                    self.toggle_bookmark_for(path);
+                }
+            }
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                if self.sidebar_selected < self.sidebar.len() {
+                    self.open_place(self.sidebar_selected);
                     self.focus = Focus::Files;
                 }
             }
@@ -661,8 +671,73 @@ impl App {
         self.message = Some(format!("Theme: {name}"));
     }
 
+    /// Opens sidebar place `i`: a folder, or the Recent list.
+    fn open_place(&mut self, i: usize) {
+        self.sidebar_selected = i;
+        let place = self.sidebar[i].clone();
+        if place.kind == liman_core::SpecialDir::Recent {
+            self.show_recent();
+        } else {
+            self.load(place.path);
+        }
+    }
+
+    /// Recently used files (GTK's list) as a results view.
+    fn show_recent(&mut self) {
+        let home = self.places.home.clone();
+        let paths = liman_core::recent::recent_files(&home);
+        if paths.is_empty() {
+            self.message = Some("No recent files".into());
+            return;
+        }
+        let results = Results {
+            command: "Recent files".into(),
+            count: paths.len(),
+        };
+        self.load_results(results, home, paths);
+    }
+
+    /// Ctrl+D: bookmark the selected folder (or this folder), or remove it if already there.
+    fn toggle_bookmark(&mut self) {
+        let folder = match self.selected_entry() {
+            Some(e) if e.is_dir => e.path.clone(),
+            _ => self.cwd.clone(),
+        };
+        self.toggle_bookmark_for(folder);
+    }
+
+    fn toggle_bookmark_for(&mut self, folder: PathBuf) {
+        let name = folder.file_name().map_or_else(
+            || folder.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        if let Some(i) = self.bookmarks.iter().position(|b| *b == folder) {
+            self.bookmarks.remove(i);
+            self.message = Some(format!("Removed bookmark “{name}”"));
+        } else {
+            self.bookmarks.push(folder);
+            self.message = Some(format!("Bookmarked “{name}”"));
+        }
+        self.sidebar = self.places.sidebar_with(&self.bookmarks);
+        self.sidebar_selected = self
+            .sidebar_selected
+            .min(self.sidebar.len().saturating_sub(1));
+        if !cfg!(test) {
+            let file = liman_core::config::bookmarks_path(&self.places.home);
+            if let Err(e) = liman_core::config::save_bookmarks(&file, &self.bookmarks) {
+                self.message = Some(format!("Bookmark not saved: {e}"));
+            }
+        }
+    }
+
     /// Settings from the config file (theme is applied earlier, in `main`).
     pub fn apply_settings(&mut self, settings: &std::collections::BTreeMap<String, String>) {
+        if !cfg!(test) {
+            self.bookmarks = liman_core::config::load_bookmarks(
+                &liman_core::config::bookmarks_path(&self.places.home),
+            );
+            self.sidebar = self.places.sidebar_with(&self.bookmarks);
+        }
         if let Some(order) = settings
             .get("sort")
             .and_then(|s| liman_core::sort::SortOrder::from_config(s))
@@ -1406,6 +1481,35 @@ mod tests {
         assert_eq!(app.results.as_ref().unwrap().count, 1);
         assert_eq!(app.visible_entries()[0].name, "sub/report.pdf");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ctrl_d_bookmarks_the_selected_folder_and_again_removes_it() {
+        let (mut app, _rx) = app();
+        let bookmarks_in_sidebar = |app: &App| {
+            app.sidebar
+                .iter()
+                .filter(|p| p.kind == liman_core::SpecialDir::Bookmark)
+                .count()
+        };
+        let ctrl_d = || {
+            AppEvent::Input(Event::Key(KeyEvent::new(
+                KeyCode::Char('d'),
+                KeyModifiers::CONTROL,
+            )))
+        };
+        app.handle(key(KeyCode::Char('j'))); // Projects
+        app.handle(ctrl_d());
+        assert_eq!(app.bookmarks, [PathBuf::from("/data/Projects")]);
+        assert_eq!(bookmarks_in_sidebar(&app), 1);
+        assert!(
+            app.sidebar
+                .iter()
+                .any(|p| p.kind == liman_core::SpecialDir::Bookmark && p.name == "Projects")
+        );
+        app.handle(ctrl_d());
+        assert!(app.bookmarks.is_empty());
+        assert_eq!(bookmarks_in_sidebar(&app), 0);
     }
 
     #[test]
