@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use liman_core::job::{Job, Outcome};
+use liman_core::job::{Done, Job, Outcome};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use super::App;
@@ -153,6 +153,18 @@ impl App {
         }
     }
 
+    /// Ctrl+Z: reverses the newest finished operation.
+    pub(super) fn undo(&mut self) {
+        let Some(done) = self.history.pop() else {
+            self.message = Some("Nothing to undo".into());
+            return;
+        };
+        let label = format!("Undoing: {}", done.describe());
+        if !self.start_job(Job::Undo(done.clone()), label) {
+            self.history.push(done); // a job is running; keep it for later
+        }
+    }
+
     /// Starts `job` on a worker unless one is already running. Returns whether it started.
     fn start_job(&mut self, job: Job, label: String) -> bool {
         if let Some(running) = &self.job {
@@ -190,7 +202,8 @@ impl App {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned());
         self.select_after_load = focus.or_else(|| self.selected_entry().map(|e| e.name.clone()));
-        if !outcome.done.is_empty() {
+        let undoable = !outcome.done.is_empty() && !matches!(outcome.done, Done::Undone(_));
+        if undoable {
             self.history.push(outcome.done);
         }
         self.load(self.cwd.clone());
@@ -340,6 +353,35 @@ mod tests {
         assert!(dir.join("a.txt").exists());
         assert!(app.history.is_empty());
         let _ = Path::new("");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ctrl_z_undoes_trash_then_rename() {
+        let (dir, mut app, rx) = setup("undo");
+        select(&mut app, "a.txt");
+        press(&mut app, KeyCode::F(2));
+        app.rename.as_mut().unwrap().text = "renamed.txt".into();
+        press(&mut app, KeyCode::Enter);
+        pump(&mut app, &rx, loaded);
+        select(&mut app, "b.txt");
+        press(&mut app, KeyCode::Delete);
+        pump(&mut app, &rx, loaded);
+        assert!(!dir.join("b.txt").exists());
+
+        ctrl(&mut app, 'z');
+        pump(&mut app, &rx, loaded);
+        assert!(dir.join("b.txt").exists());
+        assert_eq!(app.selected_entry().unwrap().name, "b.txt");
+        assert!(app.message.as_deref().unwrap().starts_with("Undone"));
+
+        ctrl(&mut app, 'z');
+        pump(&mut app, &rx, loaded);
+        assert!(dir.join("a.txt").exists() && !dir.join("renamed.txt").exists());
+        assert!(app.history.is_empty());
+
+        ctrl(&mut app, 'z');
+        assert_eq!(app.message.as_deref(), Some("Nothing to undo"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

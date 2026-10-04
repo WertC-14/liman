@@ -186,6 +186,7 @@ impl App {
             KeyCode::Char('x') if ctrl => self.copy_to_clipboard(ClipMode::Cut),
             KeyCode::Char('v') if ctrl => self.paste(),
             KeyCode::Char('a') if ctrl => self.mark_all(),
+            KeyCode::Char('z') if ctrl => self.undo(),
             KeyCode::Delete => self.trash_targets(),
             KeyCode::F(2) => self.begin_rename(),
             KeyCode::Char(' ') => self.toggle_mark(),

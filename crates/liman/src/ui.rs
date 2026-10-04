@@ -159,6 +159,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("^C ^X ^V", "copy cut paste"),
             ("Del", "trash"),
             ("F2", "rename"),
+            ("^Z", "undo"),
             ("+/-", "view"),
             ("/", "filter"),
             ("q", "quit"),
