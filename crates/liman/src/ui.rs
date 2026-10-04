@@ -87,6 +87,7 @@ fn render_help(frame: &mut Frame) {
         ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
         ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
         ("F4 / Ctrl+O", "terminal panel / full screen"),
+        ("Alt+Enter", "selected paths into the terminal"),
         ("Ctrl+↑ / Ctrl+↓", "terminal size"),
         ("t", "theme"),
         ("~", "home"),

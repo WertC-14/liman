@@ -99,6 +99,29 @@ impl App {
             .is_some_and(|t| t.typed_text().is_empty())
     }
 
+    /// Alt+Enter: type the marked (or selected) paths into the shell's command line, quoted and
+    /// relative to the shell's folder when inside it, then give the keyboard to the shell.
+    pub(super) fn paths_to_terminal(&mut self) {
+        let paths = self.targets();
+        if paths.is_empty() || !self.ensure_terminal() {
+            return;
+        }
+        if self.term_mode == TermMode::Hidden {
+            self.term_mode = TermMode::Panel;
+        }
+        self.focus = Focus::Terminal;
+        let term = self.terminal.as_mut().expect("ensured above");
+        let base = term.cwd().unwrap_or_else(|| self.cwd.clone());
+        let mut line = String::new();
+        for path in &paths {
+            let shown = path.strip_prefix(&base).unwrap_or(path);
+            line.push_str(&shell_quote(&shown.to_string_lossy()));
+            line.push(' ');
+        }
+        term.type_text(&line);
+        self.marked.clear();
+    }
+
     /// F6: move focus between the files and the panel.
     pub(super) fn switch_focus(&mut self) {
         if self.term_mode == TermMode::Panel {
@@ -176,5 +199,21 @@ impl App {
             term.cd(path);
             self.last_shell_cwd = Some(path.clone());
         }
+    }
+}
+
+/// Single-quoted for POSIX shells and fish: `it's` -> `'it'\''s'`.
+pub fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quoting_survives_spaces_and_quotes() {
+        assert_eq!(shell_quote("a b.txt"), "'a b.txt'");
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
     }
 }

@@ -379,6 +379,7 @@ impl App {
             KeyCode::Esc if !self.filter.is_empty() => self.set_filter(String::new()),
             KeyCode::Esc if self.results.is_some() => self.go_up(),
             KeyCode::Esc => self.marked.clear(),
+            KeyCode::Enter if alt => self.paths_to_terminal(),
             KeyCode::Char('h') if ctrl => self.toggle_hidden(),
             KeyCode::Char('.') => self.toggle_hidden(),
             // In the grid, left/right move between tiles and up/down jump a row (like Nautilus).

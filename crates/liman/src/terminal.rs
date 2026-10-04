@@ -38,6 +38,8 @@ pub struct Terminal {
     greeting: Greeting,
     /// The user typed something: leave the screen alone from now on.
     user_typed: bool,
+    /// Text to type at the first prompt (sent before the shell was ready, it would be lost).
+    pending_input: Vec<u8>,
     /// Folder the file view wants the shell in, waiting for the previous `cd` to finish.
     pending_cd: Option<PathBuf>,
     /// Unfinished escape sequence at the end of the last chunk (queries can be split across reads).
@@ -157,6 +159,7 @@ impl Terminal {
             size: (rows, cols),
             greeting: Greeting::Waiting,
             user_typed: false,
+            pending_input: Vec::new(),
             pending_cd: None,
             cd_in_flight: None,
             query_carry: Vec::new(),
@@ -221,6 +224,7 @@ impl Terminal {
         if self.greeting == Greeting::Sent && self.screen().cursor_position().0 <= MAX_PROMPT_LINES
         {
             self.greeting = Greeting::Done;
+            self.flush_pending_input();
         } else {
             self.greeting = Greeting::Sent;
             self.send(b"\x0c");
@@ -271,6 +275,22 @@ impl Terminal {
             cwd: capture.cwd.or_else(|| self.cwd())?,
             bytes: capture.bytes,
         })
+    }
+
+    /// Types `text` on the command line; waits for the first prompt if the shell is still starting.
+    pub fn type_text(&mut self, text: &str) {
+        self.pending_input.extend_from_slice(text.as_bytes());
+        if self.greeting == Greeting::Done || self.user_typed {
+            self.flush_pending_input();
+        }
+    }
+
+    fn flush_pending_input(&mut self) {
+        if !self.pending_input.is_empty() {
+            self.user_typed = true; // from now on the screen belongs to the user
+            let text = std::mem::take(&mut self.pending_input);
+            self.send(&text);
+        }
     }
 
     pub fn send(&mut self, bytes: &[u8]) {
