@@ -249,7 +249,7 @@ fn render_git_panel(frame: &mut Frame, app: &mut App) {
         })
         .collect();
     frame.render_widget(Clear, diff_area);
-    frame.render_widget(Paragraph::new(diff), diff_area);
+    frame.render_widget(Paragraph::new(diff).bg(theme::bg()), diff_area);
 }
 
 fn render_branch_picker(frame: &mut Frame, app: &App) {
