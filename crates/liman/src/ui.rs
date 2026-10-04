@@ -120,7 +120,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         &[
             ("Enter", "open"),
             ("⌫", "up"),
-            ("~", "home"),
+            ("+/-", "view"),
             ("/", "filter"),
             ("q", "quit"),
         ]
