@@ -180,15 +180,20 @@ fn render_git_panel(frame: &mut Frame, app: &mut App) {
         screen.width.saturating_sub(6).max(40),
         screen.height.saturating_sub(4).max(10),
     );
-    let title = format!(
-        " Git · ⎇ {} · Space stage/unstage · a all · c commit · d discard · p push · P pull · b branch · Enter show · Esc ",
-        git.summary()
-    );
+    let title = format!(" Git · ⎇ {} ", git.summary());
     let inner = popup(frame, &title, w, h);
+    let [body, keys] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
+    frame.render_widget(
+        Paragraph::new(
+            " Space stage/unstage  a stage all  c commit  d discard  p push  P pull  b branch  Enter show  Esc close",
+        )
+        .fg(theme::dim()),
+        keys,
+    );
     let [list_area, diff_area] =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Fill(1)])
             .spacing(1)
-            .areas(inner.inner(Margin::new(1, 1)));
+            .areas(body.inner(Margin::new(1, 1)));
 
     if git.files.is_empty() {
         frame.render_widget(
@@ -517,12 +522,13 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         frame.render_widget(Paragraph::new(line), area);
         return;
     }
-    let line = breadcrumb::line(&app.path_segments());
     frame.render_widget(
-        Paragraph::new(line).style(Style::new().bg(theme::bar_bg())),
+        Paragraph::new("").style(Style::new().bg(theme::bar_bg())),
         area,
     );
     // Git branch on the right: "⎇ main ↑1 ↓2" plus a count of changed files.
+    // The path gets the rest of the row so the two never overlap.
+    let mut path_area = area;
     if let Some(git) = &app.git {
         let changed = git.files.len();
         let text = if changed > 0 {
@@ -533,6 +539,7 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         let width = text.chars().count() as u16;
         if area.width > width + 20 {
             let rect = Rect::new(area.right() - width, area.y, width, 1);
+            path_area.width -= width + 1;
             let color = if changed > 0 {
                 theme::type_color(liman_core::FileType::Presentation)
             } else {
@@ -541,6 +548,8 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             frame.render_widget(Paragraph::new(Span::raw(text).fg(color).bold()), rect);
         }
     }
+    let line = breadcrumb::line(&app.path_segments());
+    frame.render_widget(Paragraph::new(line), path_area);
 }
 
 fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {

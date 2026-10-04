@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use liman_core::git::GitMark;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, Dialog};
 use crate::worker;
@@ -233,15 +233,18 @@ impl App {
         let Some(panel) = &mut self.git_panel else {
             return;
         };
+        // Only Ctrl+G means something with a modifier; Ctrl+D must not discard.
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            if key.code == KeyCode::Char('g') {
+                self.git_panel = None;
+            }
+            return;
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => self.git_panel = None,
-            KeyCode::Char('g')
-                if key
-                    .modifiers
-                    .contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
-            {
-                self.git_panel = None
-            }
             KeyCode::Up | KeyCode::Char('k') => {
                 panel.selected = panel.selected.saturating_sub(1);
                 panel.scroll = 0;
