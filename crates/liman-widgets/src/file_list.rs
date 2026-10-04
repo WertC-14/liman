@@ -17,7 +17,6 @@ use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 
-use crate::badge::{self, badge};
 use crate::boxes;
 use crate::theme;
 
@@ -102,7 +101,12 @@ impl<'a> FileList<'a> {
         if entry.is_symlink {
             name.push(Span::raw(" ↗").fg(theme::dim()));
         }
-        let name = Line::from(name);
+        // Folders stand out by their name (bold, folder color), not by an icon column.
+        let name = if entry.is_dir {
+            Line::from(name).fg(theme::accent()).bold()
+        } else {
+            Line::from(name).fg(theme::fg())
+        };
         let size = Line::from(size_text(entry))
             .right_aligned()
             .fg(theme::dim());
@@ -111,14 +115,14 @@ impl<'a> FileList<'a> {
             .fg(theme::dim());
         let row = match self.mode {
             ListMode::Detailed => Row::new([
-                Cell::from(badge(entry)),
-                Cell::from(name.fg(theme::fg())),
+                Cell::from(name),
+                Cell::from(Line::from(type_text(entry)).fg(theme::dim())),
                 Cell::from(size),
                 Cell::from(modified),
             ]),
             ListMode::Normal => Row::new([
                 Cell::from(boxes::render(entry)),
-                Cell::from(on_label_line(name.fg(theme::fg()))),
+                Cell::from(on_label_line(name)),
                 Cell::from(on_label_line(size)),
                 Cell::from(on_label_line(modified)),
             ])
@@ -150,31 +154,50 @@ impl StatefulWidget for FileList<'_> {
     type State = TableState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut TableState) {
-        let header = Row::new([
-            Cell::from(""),
-            Cell::from("Name"),
-            Cell::from(Line::from("Size").right_aligned()),
-            Cell::from(Line::from("Modified").right_aligned()),
-        ])
-        .style(Style::new().fg(theme::dim()))
-        .bottom_margin(1);
-
-        let icon_width = match self.mode {
-            ListMode::Detailed => badge::WIDTH,
-            ListMode::Normal => boxes::WIDTH,
+        let size = Cell::from(Line::from("Size").right_aligned());
+        let modified = Cell::from(Line::from("Modified").right_aligned());
+        let (header, widths) = match self.mode {
+            // Detailed: no icon column, the type is written out (Folder, PDF file, ...).
+            ListMode::Detailed => (
+                Row::new([Cell::from("Name"), Cell::from("Type"), size, modified]),
+                [
+                    Constraint::Fill(1),
+                    Constraint::Length(12),
+                    Constraint::Length(10),
+                    Constraint::Length(16),
+                ],
+            ),
+            ListMode::Normal => (
+                Row::new([Cell::from(""), Cell::from("Name"), size, modified]),
+                [
+                    Constraint::Length(boxes::WIDTH),
+                    Constraint::Fill(1),
+                    Constraint::Length(10),
+                    Constraint::Length(16),
+                ],
+            ),
         };
-        let widths = [
-            Constraint::Length(icon_width),
-            Constraint::Fill(1),
-            Constraint::Length(10),
-            Constraint::Length(16),
-        ];
+        let header = header.style(Style::new().fg(theme::dim())).bottom_margin(1);
         let rows: Vec<_> = self.entries.iter().map(|e| self.row(e)).collect();
         let table = Table::new(rows, widths)
             .header(header)
             .column_spacing(2)
             .row_highlight_style(Style::new().bg(theme::selected_bg()));
         StatefulWidget::render(table, area, buf, state);
+    }
+}
+
+/// "Folder", "PDF file", "File" (no extension).
+fn type_text(entry: &Entry) -> String {
+    if entry.is_dir {
+        return "Folder".into();
+    }
+    match entry.extension() {
+        Some(ext) => format!(
+            "{} file",
+            ext.chars().take(5).collect::<String>().to_uppercase()
+        ),
+        None => "File".into(),
     }
 }
 
@@ -235,12 +258,18 @@ mod tests {
     fn detailed_renders_header_and_one_line_per_entry() {
         let rows = draw(ListMode::Detailed, 5);
         assert!(rows[0].contains("Name") && rows[0].contains("Size"));
+        assert!(rows[0].contains("Type"));
         assert!(
-            rows[2].contains("▸") && rows[2].contains("Downloads") && rows[2].contains("72 items")
+            rows[2].contains("Downloads")
+                && rows[2].contains("Folder")
+                && rows[2].contains("72 items")
         );
         assert!(
-            rows[3].contains("PDF") && rows[3].contains("Notes.pdf") && rows[3].contains("17.1 MB")
+            rows[3].contains("Notes.pdf")
+                && rows[3].contains("PDF file")
+                && rows[3].contains("17.1 MB")
         );
+        assert!(!rows[2].contains('▸')); // no icon column any more
     }
 
     #[test]
