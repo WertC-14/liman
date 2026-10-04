@@ -1,8 +1,10 @@
 //! Application state. Rendering reads it, events change it.
 
 mod file_ops;
+mod terminal_mode;
 
 pub use file_ops::{ClipMode, Clipboard, JobStatus, RenameInput};
+pub use terminal_mode::{Focus, TermMode};
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -22,6 +24,7 @@ use ratatui::widgets::TableState;
 
 use crate::event::AppEvent;
 use crate::open::{self, OpenPlan};
+use crate::terminal::Terminal;
 use crate::worker;
 
 /// Two clicks on the same row within this time count as a double click.
@@ -106,6 +109,19 @@ pub struct App {
     pub grid_level: Option<usize>,
     /// Box size level drawn last frame. Written by the UI.
     pub drawn_grid_level: usize,
+    /// The embedded shell, started on first F4 / Ctrl+O and kept running while hidden.
+    pub terminal: Option<Terminal>,
+    pub term_mode: TermMode,
+    term_before_fullscreen: TermMode,
+    pub focus: Focus,
+    /// Where the terminal was drawn last frame. Written by the UI.
+    pub term_area: Rect,
+    /// The shell's folder as last seen, so each `cd` in the shell is followed once.
+    last_shell_cwd: Option<PathBuf>,
+    /// Folder of the listing on its way, if any.
+    loading_path: Option<PathBuf>,
+    /// The listing on its way was started by following the shell (do not send `cd` back).
+    load_from_shell: bool,
     trash_dir: PathBuf,
     /// Incremented on every listing request; older results are ignored.
     generation: u64,
@@ -135,6 +151,14 @@ impl App {
             drawn_view: View::Detailed,
             grid_level: None,
             drawn_grid_level: 0,
+            terminal: None,
+            term_mode: TermMode::Hidden,
+            term_before_fullscreen: TermMode::Hidden,
+            focus: Focus::Files,
+            term_area: Rect::default(),
+            last_shell_cwd: None,
+            loading_path: None,
+            load_from_shell: false,
             list_area: Rect::default(),
             sidebar_area: Rect::default(),
             path_bar_area: Rect::default(),
@@ -165,6 +189,7 @@ impl App {
         self.filter.clear();
         self.filter_editing = false;
         self.dirty = true;
+        self.loading_path = Some(path.clone());
         worker::spawn_listing(self.tx.clone(), self.generation, path, self.options);
     }
 
@@ -181,6 +206,8 @@ impl App {
             } => self.on_listing(generation, path, result),
             AppEvent::JobProgress { done } => self.on_job_progress(done),
             AppEvent::JobFinished(outcome) => self.on_job_finished(outcome),
+            AppEvent::TermOutput(bytes) => self.on_term_output(&bytes),
+            AppEvent::TermExited => self.on_term_exited(),
         }
     }
 
@@ -205,6 +232,17 @@ impl App {
     fn on_key(&mut self, key: KeyEvent) {
         self.dirty = true;
         self.message = None;
+        // Terminal mode keys work everywhere, whichever side has focus.
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::F(4) => return self.toggle_panel(),
+            KeyCode::Char('o') if ctrl => return self.toggle_fullscreen(),
+            KeyCode::F(6) if self.term_mode == TermMode::Panel => return self.switch_focus(),
+            _ => {}
+        }
+        if self.terminal_has_focus() {
+            return self.on_term_key(key);
+        }
         if self.rename.is_some() {
             self.on_rename_key(key);
             return;
@@ -295,6 +333,20 @@ impl App {
     }
 
     fn on_click(&mut self, column: u16, row: u16) {
+        if self.term_mode == TermMode::Fullscreen {
+            return;
+        }
+        if self.term_mode == TermMode::Panel {
+            let in_terminal = self.term_area.contains((column, row).into());
+            self.focus = if in_terminal {
+                Focus::Terminal
+            } else {
+                Focus::Files
+            };
+            if in_terminal {
+                return;
+            }
+        }
         if let Some(i) = Sidebar::row_at(self.sidebar_area, self.sidebar.len(), column, row) {
             let path = self.sidebar[i].path.clone();
             self.load(path);
@@ -480,6 +532,11 @@ impl App {
     fn on_listing(&mut self, generation: u64, path: PathBuf, result: Result<Vec<Entry>, String>) {
         if generation != self.generation {
             return; // stale: a newer request is on its way
+        }
+        self.loading_path = None;
+        let from_shell = std::mem::take(&mut self.load_from_shell);
+        if result.is_ok() {
+            self.sync_shell_to(&path, from_shell);
         }
         self.cwd = path;
         self.listing = match result {

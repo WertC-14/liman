@@ -27,6 +27,10 @@ pub enum AppEvent {
         done: u64,
     },
     JobFinished(Outcome),
+    /// Bytes the embedded shell wrote.
+    TermOutput(Vec<u8>),
+    /// The embedded shell exited.
+    TermExited,
 }
 
 /// How long the input thread waits for input before checking the pause flag again.

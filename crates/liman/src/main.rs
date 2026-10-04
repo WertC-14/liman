@@ -3,6 +3,7 @@
 mod app;
 mod event;
 mod open;
+mod terminal;
 mod tui;
 mod ui;
 mod worker;

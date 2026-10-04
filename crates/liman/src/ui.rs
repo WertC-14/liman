@@ -6,11 +6,12 @@ use liman_widgets::theme::{BAR_BG, BG, DIM, FG};
 use liman_widgets::{FileList, GridView, ListMode, Sidebar, breadcrumb, file_list, grid, sidebar};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
+use ratatui::style::{Color, Modifier};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, BorderType, Paragraph};
 
-use crate::app::{App, ClipMode, Listing, View};
+use crate::app::{App, ClipMode, Focus, Listing, TermMode, View};
 
 /// Below this width the sidebar is hidden so the list keeps enough room.
 const SIDEBAR_MIN_WIDTH: u16 = 70;
@@ -24,7 +25,27 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     .areas(frame.area());
 
     frame.render_widget(Block::new().style(Style::new().bg(BG)), frame.area());
+
+    if app.term_mode == TermMode::Fullscreen {
+        render_terminal(frame, app, top.union(body));
+        render_status_bar(frame, app, status);
+        return;
+    }
     render_path_bar(frame, app, top);
+
+    // F4 panel: full width under the files, like Dolphin.
+    let body = if app.term_mode == TermMode::Panel {
+        let height = (body.height * 2 / 5)
+            .max(8)
+            .min(body.height.saturating_sub(6));
+        let [files, term] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(height)]).areas(body);
+        render_terminal(frame, app, term);
+        files
+    } else {
+        app.term_area = Rect::default();
+        body
+    };
 
     let main = if body.width >= SIDEBAR_MIN_WIDTH {
         let [side, main] =
@@ -89,6 +110,80 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(message).centered().fg(DIM), middle);
 }
 
+/// Draws the shell's screen (vt100 cells) inside a rounded frame; blue frame = keys go to the shell.
+fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
+    app.term_area = area;
+    let focused = app.focus == Focus::Terminal || app.term_mode == TermMode::Fullscreen;
+    let accent = if focused {
+        liman_widgets::theme::type_color(liman_core::FileType::Folder)
+    } else {
+        DIM
+    };
+    let hint = match app.term_mode {
+        TermMode::Fullscreen => " Terminal · Ctrl+O back to files ",
+        _ if focused => " Terminal · F6 files · F4 close · Ctrl+O full screen ",
+        _ => " Terminal · F6 or click to type ",
+    };
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(accent))
+        .title(Span::raw(hint).fg(if focused { FG } else { DIM }));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let Some(term) = &mut app.terminal else {
+        return;
+    };
+    term.resize(inner.height, inner.width);
+    let screen = term.screen();
+    let buf = frame.buffer_mut();
+    for row in 0..inner.height {
+        for col in 0..inner.width {
+            let Some(cell) = screen.cell(row, col) else {
+                continue;
+            };
+            if cell.is_wide_continuation() {
+                continue; // covered by the wide character to its left
+            }
+            let mut style = Style::new()
+                .fg(term_color(cell.fgcolor(), FG))
+                .bg(term_color(cell.bgcolor(), BG));
+            if cell.bold() {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            if cell.italic() {
+                style = style.add_modifier(Modifier::ITALIC);
+            }
+            if cell.underline() {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            if cell.inverse() {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            let symbol = if cell.has_contents() {
+                cell.contents()
+            } else {
+                " "
+            };
+            buf[(inner.x + col, inner.y + row)]
+                .set_symbol(symbol)
+                .set_style(style);
+        }
+    }
+    if focused && !screen.hide_cursor() {
+        let (row, col) = screen.cursor_position();
+        frame.set_cursor_position((inner.x + col, inner.y + row));
+    }
+}
+
+fn term_color(color: vt100::Color, default: Color) -> Color {
+    match color {
+        vt100::Color::Default => default,
+        vt100::Color::Idx(i) => Color::Indexed(i),
+        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
 /// Falls back to a smaller view when the wanted one does not fit: the grid needs one whole tile,
 /// boxes need room for two entries.
 fn fitting_view(wanted: View, area: Rect) -> View {
@@ -104,6 +199,25 @@ fn fitting_view(wanted: View, area: Rect) -> View {
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = Vec::new();
+    if app.term_mode != TermMode::Hidden && app.focus == Focus::Terminal
+        || app.term_mode == TermMode::Fullscreen
+    {
+        spans.push(Span::raw(" ⌂ ").fg(DIM));
+        spans.push(Span::raw(app.cwd.display().to_string()).fg(FG));
+        for (key, what) in [
+            ("Ctrl+O", "files / full screen"),
+            ("F6", "focus"),
+            ("F4", "panel"),
+        ] {
+            spans.push(Span::raw(format!("  {key} ")).bold());
+            spans.push(Span::raw(what).fg(DIM));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BAR_BG)),
+            area,
+        );
+        return;
+    }
     if let Some(input) = &app.rename {
         spans.push(Span::raw(" Rename: ").fg(DIM));
         spans.push(Span::raw(input.text.as_str()).fg(FG).bold());
@@ -179,6 +293,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("F2", "rename"),
             ("^Z", "undo"),
             ("+/-", "view"),
+            ("F4", "terminal"),
             ("/", "filter"),
             ("q", "quit"),
         ]
