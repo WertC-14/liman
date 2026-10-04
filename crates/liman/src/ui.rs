@@ -76,6 +76,7 @@ fn render_help(frame: &mut Frame) {
     const KEYS: &[(&str, &str)] = &[
         ("Enter / double click", "open"),
         ("Bksp / Alt+↑", "parent folder"),
+        ("Alt+← / Alt+→", "back / forward"),
         ("Tab / Shift+Tab", "Places · Files · Terminal"),
         ("v", "small list ↔ large view"),
         ("+ / -  (Ctrl+wheel)", "zoom"),

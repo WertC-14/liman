@@ -85,6 +85,13 @@ pub struct App {
     pub table: TableState,
     /// Case-insensitive substring filter typed after `/`.
     pub filter: String,
+    /// Folders visited before / after the current one (Alt+← / Alt+→).
+    back_stack: Vec<PathBuf>,
+    forward_stack: Vec<PathBuf>,
+    /// The listing on its way comes from back/forward (do not touch the stacks).
+    moving_in_history: bool,
+    /// Last selected entry per folder, restored when coming back.
+    remembered: std::collections::HashMap<PathBuf, String>,
     /// Order of folder listings (`s` / `S` / header click); saved in the config.
     pub sort: liman_core::sort::SortOrder,
     /// Lower-case entry names, made once per listing for the filter.
@@ -174,6 +181,10 @@ impl App {
             table: TableState::default(),
             filter: String::new(),
             names_lower: Vec::new(),
+            back_stack: Vec::new(),
+            forward_stack: Vec::new(),
+            moving_in_history: false,
+            remembered: std::collections::HashMap::new(),
             sort: liman_core::sort::SortOrder::default(),
             visible_for: String::new(),
             filter_editing: false,
@@ -238,6 +249,12 @@ impl App {
     }
 
     fn start_loading(&mut self, path: &std::path::Path) {
+        // Remember what was selected here, for when the user comes back.
+        if self.results.is_none()
+            && let Some(entry) = self.selected_entry()
+        {
+            self.remembered.insert(self.cwd.clone(), entry.name.clone());
+        }
         self.generation += 1;
         self.listing = Listing::Loading;
         self.visible.clear();
@@ -344,8 +361,11 @@ impl App {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
             // Folder navigation that works in every view (GUI file manager keys).
-            KeyCode::Up | KeyCode::Left if alt => self.go_up(),
-            KeyCode::Down | KeyCode::Right if alt => self.activate_selected(),
+            // Like Nautilus / a browser: Alt+← back, Alt+→ forward, Alt+↑ parent, Alt+↓ open.
+            KeyCode::Left if alt => self.go_back(),
+            KeyCode::Right if alt => self.go_forward(),
+            KeyCode::Up if alt => self.go_up(),
+            KeyCode::Down if alt => self.activate_selected(),
             // GUI shortcuts: Ctrl+C copies, so quitting is q or Ctrl+Q.
             KeyCode::Char('q') => self.running = false,
             KeyCode::Char('c') if ctrl => self.copy_to_clipboard(ClipMode::Copy),
@@ -817,6 +837,22 @@ impl App {
         self.load_results(results, out.cwd, paths);
     }
 
+    fn go_back(&mut self) {
+        if let Some(path) = self.back_stack.pop() {
+            self.forward_stack.push(self.cwd.clone());
+            self.moving_in_history = true;
+            self.load(path);
+        }
+    }
+
+    fn go_forward(&mut self) {
+        if let Some(path) = self.forward_stack.pop() {
+            self.back_stack.push(self.cwd.clone());
+            self.moving_in_history = true;
+            self.load(path);
+        }
+    }
+
     fn go_up(&mut self) {
         if self.results.is_some() {
             return self.load(self.cwd.clone()); // back from results to the folder
@@ -869,6 +905,17 @@ impl App {
         let from_shell = std::mem::take(&mut self.load_from_shell);
         if result.is_ok() {
             self.sync_shell_to(&path, from_shell);
+        }
+        // History: a move to another folder (not back/forward, not a reload) is a new step.
+        let from_history = std::mem::take(&mut self.moving_in_history);
+        if path != self.cwd {
+            if !from_history {
+                self.back_stack.push(self.cwd.clone());
+                self.forward_stack.clear();
+            }
+            if self.select_after_load.is_none() {
+                self.select_after_load = self.remembered.get(&path).cloned();
+            }
         }
         self.cwd = path;
         self.listing = match result {
@@ -1245,6 +1292,34 @@ mod tests {
         app.handle(ctrl_h);
         assert!(app.options.show_hidden);
         assert!(matches!(app.listing, Listing::Loading));
+    }
+
+    /// Delivers a listing of `path` with the given names (all folders) for the newest request.
+    fn arrive(app: &mut App, path: &str, names: &[&str]) {
+        let generation = app.generation;
+        app.handle(AppEvent::Listing {
+            generation,
+            path: PathBuf::from(path),
+            result: Ok(names.iter().map(|n| entry(n, true)).collect()),
+        });
+    }
+
+    #[test]
+    fn alt_left_right_walk_the_history_and_restore_the_selection() {
+        let (mut app, _rx) = app(); // in /data, Music selected
+        app.handle(key(KeyCode::Char('j'))); // Projects
+        app.handle(key(KeyCode::Enter));
+        arrive(&mut app, "/data/Projects", &["liman"]);
+        let alt = |code| AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::ALT)));
+        app.handle(alt(KeyCode::Left)); // back
+        arrive(&mut app, "/data", &["Music", "Projects"]);
+        assert_eq!(app.cwd, PathBuf::from("/data"));
+        assert_eq!(selected_name(&app), "Projects"); // remembered
+        app.handle(alt(KeyCode::Right)); // forward
+        arrive(&mut app, "/data/Projects", &["liman"]);
+        assert_eq!(app.cwd, PathBuf::from("/data/Projects"));
+        assert!(app.forward_stack.is_empty());
+        assert_eq!(app.back_stack, [PathBuf::from("/data")]);
     }
 
     #[test]
