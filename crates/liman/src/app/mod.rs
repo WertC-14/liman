@@ -85,6 +85,10 @@ pub struct App {
     pub table: TableState,
     /// Case-insensitive substring filter typed after `/`.
     pub filter: String,
+    /// Lower-case entry names, made once per listing for the filter.
+    names_lower: Vec<String>,
+    /// The (lower-case) filter `visible` was computed for.
+    visible_for: String,
     /// True while the user is typing the filter.
     pub filter_editing: bool,
     /// One-line message for the status bar (cleared on the next key press).
@@ -167,6 +171,8 @@ impl App {
             visible: Vec::new(),
             table: TableState::default(),
             filter: String::new(),
+            names_lower: Vec::new(),
+            visible_for: String::new(),
             filter_editing: false,
             message: None,
             external: None,
@@ -739,18 +745,25 @@ impl App {
         self.select_row(0);
     }
 
+    /// Recomputes `visible` from the filter. Lower-case names are made once per listing; when the
+    /// filter only got longer, the search stays inside the previous matches.
     fn refresh_visible(&mut self) {
         let Listing::Ready(entries) = &self.listing else {
             self.visible.clear();
             return;
         };
+        if self.names_lower.len() != entries.len() {
+            self.names_lower = entries.iter().map(|e| e.name.to_lowercase()).collect();
+        }
         let needle = self.filter.to_lowercase();
-        self.visible = entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| needle.is_empty() || e.name.to_lowercase().contains(&needle))
-            .map(|(i, _)| i)
-            .collect();
+        let narrowing = !self.visible_for.is_empty() && needle.starts_with(&self.visible_for);
+        let matches = |i: &usize| needle.is_empty() || self.names_lower[*i].contains(&needle);
+        self.visible = if narrowing {
+            self.visible.iter().copied().filter(matches).collect()
+        } else {
+            (0..entries.len()).filter(matches).collect()
+        };
+        self.visible_for = needle;
     }
 
     // ---- worker results ----
@@ -775,6 +788,8 @@ impl App {
             }
             Err(err) => Listing::Failed(err),
         };
+        self.names_lower.clear();
+        self.visible_for.clear();
         self.refresh_visible();
         self.table = TableState::default();
         let came_from = self.select_after_load.take();
