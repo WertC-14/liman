@@ -1,11 +1,11 @@
 //! One-line type badge for the detailed view (ADR 0003): ` PDF `, ` RS `, ` ▸ ` for folders.
 
 use liman_core::Entry;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 
 use crate::symbols;
-use crate::theme::{text_on, type_color};
+use crate::theme::type_color;
 
 /// Badge width in cells, including padding.
 pub const WIDTH: u16 = 6;
@@ -25,10 +25,16 @@ pub fn label(entry: &Entry) -> String {
     }
 }
 
+/// The label in the type color on the normal background. (A filled color block per row made a
+/// bright stripe down the list that tired the eyes.)
 pub fn badge(entry: &Entry) -> Span<'static> {
-    let bg = type_color(entry.file_type);
     let text = format!("{:^width$}", label(entry), width = usize::from(WIDTH));
-    Span::styled(text, Style::new().bg(bg).fg(text_on(bg)))
+    Span::styled(
+        text,
+        Style::new()
+            .fg(type_color(entry.file_type))
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
 #[cfg(test)]
