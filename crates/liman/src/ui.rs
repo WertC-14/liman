@@ -53,17 +53,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         let [side, main] =
             Layout::horizontal([Constraint::Length(sidebar::WIDTH + 2), Constraint::Fill(1)])
                 .areas(body);
-        let block = panel(" Places ", false);
+        let places_focused = app.focus == Focus::Places;
+        let block = panel(" Places ", places_focused);
         let places = block.inner(side).inner(Margin::new(0, 1));
         frame.render_widget(block, side);
         app.sidebar_area = places;
-        frame.render_widget(Sidebar::new(&app.sidebar, &app.cwd), places);
+        let mut sidebar = Sidebar::new(&app.sidebar, &app.cwd);
+        if places_focused {
+            sidebar = sidebar.focused(app.sidebar_selected);
+        }
+        frame.render_widget(sidebar, places);
         main
     } else {
         app.sidebar_area = Rect::default();
         body
     };
-    let files_focused = app.term_mode == TermMode::Hidden || app.focus == Focus::Files;
+    let files_focused = app.focus == Focus::Files;
     let title = match (&app.results, app.entry_count()) {
         (Some(_), Some(n)) => format!(" Results · {} ", format::items(n)),
         (None, Some(n)) => format!(" {} · {} ", folder_name(app), format::items(n)),
@@ -180,7 +185,7 @@ fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
     let hint = match app.term_mode {
         TermMode::Fullscreen => " Terminal · Ctrl+O back to files ",
         _ if focused => {
-            " Terminal · Shift+Tab files · Ctrl+↑↓ size · F4 close · Ctrl+O full screen "
+            " Terminal · Tab on empty line: next panel · Ctrl+↑↓ size · F4 close · Ctrl+O full screen "
         }
         _ => " Terminal · Tab or click to type ",
     };
@@ -354,7 +359,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("^Z", "undo"),
             ("v", "small/large"),
             ("+/-", "zoom"),
-            ("Tab", "terminal"),
+            ("Tab", "panels"),
             ("/", "filter"),
             ("q", "quit"),
         ]

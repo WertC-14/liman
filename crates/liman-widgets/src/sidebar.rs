@@ -10,18 +10,29 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::symbols;
-use crate::theme::{BAR_BG, DIM, FG, SELECTED_BG, type_color};
+use crate::theme::{DIM, FG, SELECTED_BG, type_color};
 
 pub const WIDTH: u16 = 22;
 
 pub struct Sidebar<'a> {
     places: &'a [Place],
     current: &'a Path,
+    focused: Option<usize>,
 }
 
 impl<'a> Sidebar<'a> {
     pub fn new(places: &'a [Place], current: &'a Path) -> Self {
-        Self { places, current }
+        Self {
+            places,
+            current,
+            focused: None,
+        }
+    }
+
+    /// Shows the keyboard cursor on place `index` (when the Places panel has focus).
+    pub fn focused(mut self, index: usize) -> Self {
+        self.focused = Some(index);
+        self
     }
 
     /// Which place is at terminal row `row` (column is checked against `area`).
@@ -39,22 +50,25 @@ impl Widget for Sidebar<'_> {
         let lines: Vec<Line> = self
             .places
             .iter()
-            .map(|place| {
+            .enumerate()
+            .map(|(i, place)| {
                 let active = place.path == self.current;
+                let cursor = self.focused == Some(i);
+                let marker = if cursor { "▌" } else { " " };
                 let line = Line::from(vec![
-                    Span::raw(format!(" {} ", symbols::special_dir(place.kind))).fg(folder),
-                    Span::raw(place.name.as_str()).fg(if active { FG } else { DIM }),
+                    Span::raw(marker).fg(folder),
+                    Span::raw(format!("{} ", symbols::special_dir(place.kind))).fg(folder),
+                    Span::raw(place.name.as_str()).fg(if active || cursor { FG } else { DIM }),
                 ]);
-                if active {
-                    line.style(Style::new().bg(SELECTED_BG)).bold()
-                } else {
-                    line
+                match (cursor, active) {
+                    (true, _) => line.style(Style::new().bg(SELECTED_BG)).bold(),
+                    (false, true) => line.bold(),
+                    _ => line,
                 }
             })
             .collect();
-        Paragraph::new(lines)
-            .style(Style::new().bg(BAR_BG))
-            .render(area, buf);
+        // No background of its own: it sits inside the Places panel.
+        Paragraph::new(lines).render(area, buf);
     }
 }
 
@@ -94,7 +108,17 @@ mod tests {
         let row = |y: u16| -> String { (0..WIDTH).map(|x| buf[(x, y)].symbol()).collect() };
         assert!(row(0).contains("⌂ Home"));
         assert!(row(1).contains("↓ Downloads"));
-        assert_eq!(buf[(10, 1)].bg, SELECTED_BG);
-        assert_eq!(buf[(10, 0)].bg, BAR_BG);
+        assert!(
+            buf[(10, 1)]
+                .modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        ); // current place
+
+        let mut buf = Buffer::empty(area);
+        Sidebar::new(&places, Path::new("/home/u"))
+            .focused(1)
+            .render(area, &mut buf);
+        assert_eq!(buf[(10, 1)].bg, SELECTED_BG); // keyboard cursor
+        assert_eq!(buf[(0, 1)].symbol(), "▌");
     }
 }

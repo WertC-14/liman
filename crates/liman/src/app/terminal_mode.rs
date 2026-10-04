@@ -18,8 +18,10 @@ pub enum TermMode {
     Fullscreen,
 }
 
+/// Which panel gets the keys. Tab / Shift+Tab cycle Places → Files → Terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
+    Places,
     Files,
     Terminal,
 }
@@ -62,20 +64,46 @@ impl App {
         }
     }
 
-    /// Tab: put the keyboard in the terminal, opening the panel if needed.
-    pub(super) fn focus_terminal(&mut self) {
-        if self.term_mode == TermMode::Hidden {
-            self.toggle_panel();
-        } else {
-            self.focus = Focus::Terminal;
+    /// Tab: Places → Files → Terminal (opening the panel) → Places.
+    pub(super) fn focus_next(&mut self) {
+        match self.focus {
+            Focus::Places => self.focus = Focus::Files,
+            Focus::Files if self.term_mode == TermMode::Hidden => self.toggle_panel(),
+            Focus::Files => self.focus = Focus::Terminal,
+            Focus::Terminal => self.focus = self.places_or_files(),
         }
+    }
+
+    /// Shift+Tab: the other way round (the terminal is skipped when it is closed).
+    pub(super) fn focus_prev(&mut self) {
+        self.focus = match self.focus {
+            Focus::Files => self.places_or_files(),
+            Focus::Places if self.term_mode == TermMode::Panel => Focus::Terminal,
+            Focus::Places | Focus::Terminal => Focus::Files,
+        };
+    }
+
+    /// Places, unless the sidebar is hidden (narrow window).
+    fn places_or_files(&self) -> Focus {
+        if self.sidebar_area.width > 0 {
+            Focus::Places
+        } else {
+            Focus::Files
+        }
+    }
+
+    /// In the terminal Tab completes; only on an empty command line does it move on.
+    pub(super) fn terminal_line_empty(&self) -> bool {
+        self.terminal
+            .as_ref()
+            .is_some_and(|t| t.typed_text().is_empty())
     }
 
     /// F6: move focus between the files and the panel.
     pub(super) fn switch_focus(&mut self) {
         if self.term_mode == TermMode::Panel {
             self.focus = match self.focus {
-                Focus::Files => Focus::Terminal,
+                Focus::Files | Focus::Places => Focus::Terminal,
                 Focus::Terminal => Focus::Files,
             };
         }

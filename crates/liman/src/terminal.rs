@@ -300,7 +300,7 @@ impl Terminal {
 
     /// What the user typed on the command line so far (left of the cursor, so fish's grey
     /// autosuggestion to the right does not count).
-    fn typed_text(&self) -> String {
+    pub fn typed_text(&self) -> String {
         let (row, col) = self.screen().cursor_position();
         strip_prompt(&self.screen().contents_between(row, 0, row, col))
     }

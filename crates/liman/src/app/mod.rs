@@ -99,6 +99,8 @@ pub struct App {
     pub list_area: Rect,
     /// Where the sidebar was drawn last frame (empty when hidden). Written by the UI.
     pub sidebar_area: Rect,
+    /// Highlighted place when the Places panel has focus.
+    pub sidebar_selected: usize,
     /// Where the path bar was drawn last frame. Written by the UI.
     pub path_bar_area: Rect,
     pub places: Places,
@@ -182,6 +184,7 @@ impl App {
             load_from_shell: false,
             list_area: Rect::default(),
             sidebar_area: Rect::default(),
+            sidebar_selected: 0,
             path_bar_area: Rect::default(),
             sidebar: places.sidebar(),
             marked: HashSet::new(),
@@ -287,17 +290,22 @@ impl App {
             KeyCode::Down if ctrl && self.term_mode == TermMode::Panel => {
                 return self.resize_panel(-2);
             }
-            // Tab: files -> terminal. In the terminal Tab stays the shell's completion key,
-            // Shift+Tab goes back to the files.
-            KeyCode::Tab if !self.terminal_has_focus() => return self.focus_terminal(),
-            KeyCode::BackTab if self.term_mode == TermMode::Panel => {
-                self.focus = Focus::Files;
-                return;
+            // Tab / Shift+Tab move between Places, Files and the terminal panel. In the terminal,
+            // Tab completes while there is text on the command line.
+            KeyCode::Tab
+                if !self.terminal_has_focus()
+                    || (self.term_mode == TermMode::Panel && self.terminal_line_empty()) =>
+            {
+                return self.focus_next();
             }
+            KeyCode::BackTab if self.term_mode != TermMode::Fullscreen => return self.focus_prev(),
             _ => {}
         }
         if self.terminal_has_focus() {
             return self.on_term_key(key);
+        }
+        if self.focus == Focus::Places && self.on_places_key(key) {
+            return;
         }
         if self.rename.is_some() {
             self.on_rename_key(key);
@@ -417,6 +425,7 @@ impl App {
             }
         }
         if let Some(i) = Sidebar::row_at(self.sidebar_area, self.sidebar.len(), column, row) {
+            self.sidebar_selected = i;
             let path = self.sidebar[i].path.clone();
             self.load(path);
             return;
@@ -481,6 +490,31 @@ impl App {
             }
         };
         isize::try_from(entries).unwrap_or(1).max(1)
+    }
+
+    /// Keys while Places has focus: ↑↓ choose, Enter/→ opens and moves to the files.
+    /// Returns false for keys Places does not use (they work as usual).
+    fn on_places_key(&mut self, key: KeyEvent) -> bool {
+        let last = self.sidebar.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.sidebar_selected = self.sidebar_selected.saturating_sub(1)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.sidebar_selected = (self.sidebar_selected + 1).min(last)
+            }
+            KeyCode::Home | KeyCode::Char('g') => self.sidebar_selected = 0,
+            KeyCode::End | KeyCode::Char('G') => self.sidebar_selected = last,
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                if let Some(place) = self.sidebar.get(self.sidebar_selected) {
+                    let path = place.path.clone();
+                    self.load(path);
+                    self.focus = Focus::Files;
+                }
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// `v`: one key between the compact list (like cardea) and the large view last used.
@@ -980,6 +1014,24 @@ mod tests {
         assert_eq!(app.view, View::Detailed);
         app.handle(key(KeyCode::Char('v')));
         assert_eq!(app.view, View::Grid);
+    }
+
+    #[test]
+    fn tab_cycles_places_files_and_places_keys_open_a_place() {
+        let (mut app, _rx) = app();
+        app.sidebar_area = Rect::new(0, 1, 22, 10);
+        app.focus = Focus::Places;
+        app.handle(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Files);
+        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT,
+        ))));
+        assert_eq!(app.focus, Focus::Places);
+        app.handle(key(KeyCode::Down)); // stays on the only place
+        app.handle(key(KeyCode::Enter)); // opens Home (/data)
+        assert_eq!(app.focus, Focus::Files);
+        assert!(matches!(app.listing, Listing::Loading));
     }
 
     #[test]
