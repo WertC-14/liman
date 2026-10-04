@@ -4,17 +4,16 @@ mod file_ops;
 
 pub use file_ops::{ClipMode, Clipboard, JobStatus, RenameInput};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use liman_core::icons::{ICON_SIZES, IconPixels, IconTheme, icon_key};
 use liman_core::job::Done;
 use liman_core::{Entry, ListOptions, Place, Places, trash};
 use liman_widgets::breadcrumb::{self, Segment};
-use liman_widgets::{FileList, GridView, ListMode, Sidebar};
+use liman_widgets::grid::{self, GridView};
+use liman_widgets::{FileList, ListMode, Sidebar};
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -103,18 +102,10 @@ pub struct App {
     pub history: Vec<Done>,
     /// F2 rename in progress.
     pub rename: Option<RenameInput>,
-    /// Rendered icons for the grid, by `icon_key`.
-    pub icons: HashMap<String, IconPixels>,
-    /// Keys already sent to the icon worker (loaded or on their way).
-    icons_requested: HashSet<String>,
-    /// Icon size chosen with `+` / `-` in the grid; `None` = pick the largest that fits.
-    pub grid_size: Option<u32>,
-    /// Icon size drawn last frame. Written by the UI.
-    pub drawn_icon_size: u32,
-    /// (listing generation, icon size) the icons were last requested for.
-    icons_requested_for: Option<(u64, u32)>,
-    /// The icon theme, loaded once by the first icon worker.
-    icon_theme: Arc<OnceLock<IconTheme>>,
+    /// Box size level chosen with `+` / `-` in the grid; `None` = the largest that fits.
+    pub grid_level: Option<usize>,
+    /// Box size level drawn last frame. Written by the UI.
+    pub drawn_grid_level: usize,
     trash_dir: PathBuf,
     /// Incremented on every listing request; older results are ignored.
     generation: u64,
@@ -139,15 +130,11 @@ impl App {
             filter_editing: false,
             message: None,
             external: None,
-            // The grid with large icons is what sets liman apart, so it is the first thing you see.
+            // The grid of type-colored boxes is what sets liman apart, so it is the first thing you see.
             view: View::Grid,
             drawn_view: View::Detailed,
-            icons: HashMap::new(),
-            icons_requested: HashSet::new(),
-            grid_size: None,
-            drawn_icon_size: ICON_SIZES[0],
-            icons_requested_for: None,
-            icon_theme: Arc::new(OnceLock::new()),
+            grid_level: None,
+            drawn_grid_level: 0,
             list_area: Rect::default(),
             sidebar_area: Rect::default(),
             path_bar_area: Rect::default(),
@@ -194,10 +181,6 @@ impl App {
             } => self.on_listing(generation, path, result),
             AppEvent::JobProgress { done } => self.on_job_progress(done),
             AppEvent::JobFinished(outcome) => self.on_job_finished(outcome),
-            AppEvent::Icons(icons) => {
-                self.icons.extend(icons);
-                self.dirty = true;
-            }
         }
     }
 
@@ -328,7 +311,7 @@ impl App {
             None => GridView::index_at(
                 self.list_area,
                 self.table.offset(),
-                self.drawn_icon_size,
+                self.drawn_grid_level,
                 column,
                 row,
             ),
@@ -368,77 +351,37 @@ impl App {
                     / mode.row_height(),
             ),
             None => {
-                let (_, tile_h) = liman_widgets::grid::tile_size(self.drawn_icon_size);
+                let (_, tile_h) = grid::tile_size(self.drawn_grid_level);
                 usize::from(self.list_area.height / tile_h) * self.grid_columns()
             }
         };
         isize::try_from(entries).unwrap_or(1).max(1)
     }
 
-    /// Zooms like a GUI file manager: Detailed → Normal → Grid, then larger and larger icons.
+    /// Zooms like a GUI file manager: Detailed → Normal → Grid, then larger and larger boxes.
     fn zoom(&mut self, step: i8) {
-        let sizes = ICON_SIZES;
-        let current = sizes
-            .iter()
-            .position(|&s| s == self.drawn_icon_size)
-            .unwrap_or(0);
+        let current = self.drawn_grid_level;
+        let largest = grid::BOX_SIZES.len() - 1;
         match (self.view, step.signum()) {
             (View::Detailed, 1) => self.view = View::Normal,
             (View::Normal, 1) => {
                 self.view = View::Grid;
-                self.grid_size = None; // fit to the window first
+                self.grid_level = None; // fit to the window first
             }
-            (View::Grid, 1) => {
-                self.grid_size = Some(sizes[(current + 1).min(sizes.len() - 1)]);
-            }
+            (View::Grid, 1) => self.grid_level = Some((current + 1).min(largest)),
             (View::Grid, -1) if current == 0 => {
                 self.view = View::Normal;
-                self.grid_size = None;
+                self.grid_level = None;
             }
-            (View::Grid, -1) => self.grid_size = Some(sizes[current - 1]),
+            (View::Grid, -1) => self.grid_level = Some(current - 1),
             (View::Normal, -1) => self.view = View::Detailed,
             _ => {}
         }
     }
 
-    /// Called after every frame: once the grid's icon size is known, asks for missing icons.
-    pub fn after_draw(&mut self) {
-        let wanted = (self.generation, self.drawn_icon_size);
-        if self.drawn_view == View::Grid && self.icons_requested_for != Some(wanted) {
-            if matches!(self.listing, Listing::Ready(_)) {
-                self.icons_requested_for = Some(wanted);
-            }
-            self.request_icons();
-        }
-    }
-
-    /// Asks the worker for icons of the drawn size that are not loaded or on their way yet.
-    fn request_icons(&mut self) {
-        let Listing::Ready(entries) = &self.listing else {
-            return;
-        };
-        let size = self.drawn_icon_size;
-        let mut wanted = Vec::new();
-        for entry in entries {
-            let key = icon_key(entry, size);
-            if self.icons_requested.insert(key.clone()) {
-                wanted.push((key, entry.clone()));
-            }
-        }
-        if !wanted.is_empty() {
-            worker::spawn_icons(
-                self.tx.clone(),
-                self.icon_theme.clone(),
-                self.places.home.clone(),
-                size,
-                wanted,
-            );
-        }
-    }
-
     /// Tiles per row in the grid as drawn last frame.
     fn grid_columns(&self) -> usize {
-        GridView::columns(self.list_area.width, self.drawn_icon_size)
+        GridView::columns(self.list_area.width, self.drawn_grid_level)
     }
 
     /// Rows move by one entry in the lists, by a whole tile row in the grid.
@@ -792,14 +735,14 @@ mod tests {
         app.handle(key(KeyCode::Char('+')));
         assert_eq!(app.view, View::Normal);
         app.handle(key(KeyCode::Char('+')));
-        assert_eq!((app.view, app.grid_size), (View::Grid, None)); // grid, fitted to the window
-        app.handle(key(KeyCode::Char('+'))); // larger icons
-        assert_eq!(app.grid_size, Some(24));
-        app.drawn_icon_size = 24;
+        assert_eq!((app.view, app.grid_level), (View::Grid, None)); // grid, fitted to the window
+        app.handle(key(KeyCode::Char('+'))); // larger boxes
+        assert_eq!(app.grid_level, Some(1));
+        app.drawn_grid_level = 1;
         app.handle(key(KeyCode::Char('-')));
-        assert_eq!(app.grid_size, Some(16));
-        app.drawn_icon_size = 16;
-        app.handle(key(KeyCode::Char('-'))); // smallest icons: back to the box list
+        assert_eq!(app.grid_level, Some(0));
+        app.drawn_grid_level = 0;
+        app.handle(key(KeyCode::Char('-'))); // smallest boxes: back to the box list
         app.handle(key(KeyCode::Char('-')));
         assert_eq!(app.view, View::Detailed);
 
@@ -834,30 +777,6 @@ mod tests {
         app.handle(key(KeyCode::Left));
         assert_eq!(selected_name(&app), "a.txt");
         assert_eq!(app.cwd, PathBuf::from("/data")); // left did not go up a folder
-    }
-
-    #[test]
-    fn grid_view_requests_each_icon_kind_once() {
-        let (mut app, rx) = app();
-        app.drawn_view = View::Grid; // as if the UI drew the grid
-        app.after_draw();
-        app.after_draw(); // same folder, same size: no second request
-        // Other worker events (the initial listing of /data) may arrive first.
-        while app.icons.is_empty() {
-            let ev = rx
-                .recv_timeout(std::time::Duration::from_secs(10))
-                .expect("icons");
-            app.handle(ev);
-        }
-        // Music (special), Projects (folder), a.txt, b.pdf, c.rs: 5 different icons.
-        assert_eq!(app.icons.len(), 5);
-        app.after_draw(); // nothing new to ask for
-        while let Ok(ev) = rx.recv_timeout(std::time::Duration::from_millis(300)) {
-            assert!(
-                !matches!(ev, AppEvent::Icons(_)),
-                "icons were requested twice"
-            );
-        }
     }
 
     #[test]

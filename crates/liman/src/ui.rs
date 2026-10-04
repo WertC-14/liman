@@ -68,10 +68,10 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
                     &mut app.table,
                 ),
                 None => {
-                    let wanted = app.grid_size.unwrap_or_else(|| grid::best_icon_size(area));
-                    app.drawn_icon_size = grid::fitting_icon_size(wanted, area);
+                    let wanted = app.grid_level.unwrap_or_else(|| grid::best_level(area));
+                    app.drawn_grid_level = grid::fitting_level(wanted, area);
                     frame.render_stateful_widget(
-                        GridView::new(&rows, &app.icons, app.drawn_icon_size).marked(&app.marked),
+                        GridView::new(&rows, app.drawn_grid_level).marked(&app.marked),
                         area,
                         &mut app.table,
                     );
@@ -159,7 +159,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::raw(format!(" | {} {verb}", format::items(clip.paths.len()))).fg(DIM));
     }
     let view = match app.drawn_view {
-        View::Grid => format!("Grid {}px", app.drawn_icon_size),
+        View::Grid => format!("Grid {}", app.drawn_grid_level + 1),
         other => other.name().to_string(),
     };
     spans.push(Span::raw(format!(" | {view} view")).fg(DIM));
@@ -254,7 +254,7 @@ mod tests {
             View::Grid
         );
         assert_eq!(
-            fitting_view(View::Grid, Rect::new(0, 0, 80, 9)),
+            fitting_view(View::Grid, Rect::new(0, 0, 80, 6)),
             View::Detailed
         );
         assert_eq!(

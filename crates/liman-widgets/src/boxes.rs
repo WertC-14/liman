@@ -18,33 +18,47 @@ use crate::theme::type_color;
 pub const WIDTH: u16 = 10;
 pub const HEIGHT: u16 = 4;
 
-/// Four lines, `WIDTH` cells each.
+/// The box at the list size (`WIDTH` × `HEIGHT`).
 pub fn render(entry: &Entry) -> Text<'static> {
-    let width = usize::from(WIDTH);
+    render_sized(entry, WIDTH, HEIGHT)
+}
+
+/// A hollow box `width` × `height` cells (at least 6 × 4): folders get a tab on top,
+/// the label (symbol or extension) sits on the middle line, everything in the type color.
+pub fn render_sized(entry: &Entry, width: u16, height: u16) -> Text<'static> {
+    let (width, height) = (usize::from(width.max(6)), usize::from(height.max(4)));
     let inner = width - 2;
     let label = if entry.is_dir && entry.special.is_none() {
         String::new() // plain folders: the shape says enough
     } else {
         badge::label(entry)
     };
-    let middle = format!("│{label:^inner$}│");
-    let bottom = format!("╰{}╯", "─".repeat(inner));
-    let lines = if entry.is_dir {
+    let empty = format!("│{}│", " ".repeat(inner));
+    let mut lines = Vec::with_capacity(height);
+    let body = if entry.is_dir {
         let tab = (width / 3).max(3);
-        [
-            format!("╭{}╮{}", "─".repeat(tab - 2), " ".repeat(width - tab)),
-            format!("│{}╰{}╮", " ".repeat(tab - 2), "─".repeat(width - tab - 1)),
-            middle,
-            bottom,
-        ]
+        lines.push(format!(
+            "╭{}╮{}",
+            "─".repeat(tab - 2),
+            " ".repeat(width - tab)
+        ));
+        lines.push(format!(
+            "│{}╰{}╮",
+            " ".repeat(tab - 2),
+            "─".repeat(width - tab - 1)
+        ));
+        height - 3
     } else {
-        [
-            format!("╭{}╮", "─".repeat(inner)),
-            format!("│{}│", " ".repeat(inner)),
-            middle,
-            bottom,
-        ]
+        lines.push(format!("╭{}╮", "─".repeat(inner)));
+        height - 2
     };
+    // Same line for folders and files, so labels line up across a row of tiles.
+    let label_at = (height / 2).max(lines.len());
+    for _ in 0..body {
+        lines.push(empty.clone());
+    }
+    lines[label_at] = format!("│{label:^inner$}│");
+    lines.push(format!("╰{}╯", "─".repeat(inner)));
     let style = Style::new().fg(type_color(entry.file_type));
     Text::from(lines.into_iter().map(Line::from).collect::<Vec<_>>()).style(style)
 }
@@ -93,6 +107,24 @@ mod tests {
             lines(&text),
             ["╭────────╮", "│        │", "│  PDF   │", "╰────────╯"]
         );
+    }
+
+    #[test]
+    fn larger_boxes_keep_the_shape() {
+        let text = render_sized(&entry("Music", true, Some(SpecialDir::Music)), 12, 6);
+        assert_eq!(
+            lines(&text),
+            [
+                "╭──╮        ",
+                "│  ╰───────╮",
+                "│          │",
+                "│    ♪     │",
+                "│          │",
+                "╰──────────╯",
+            ]
+        );
+        let text = render_sized(&entry("a.pdf", false, None), 10, 5);
+        assert_eq!(lines(&text)[2], "│  PDF   │");
     }
 
     #[test]
