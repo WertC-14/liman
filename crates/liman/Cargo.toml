@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 liman-core.workspace = true
 liman-widgets.workspace = true
+ratatui = "0.30"
 
 [lints]
 workspace = true
