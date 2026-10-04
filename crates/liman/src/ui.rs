@@ -18,7 +18,7 @@ const SIDEBAR_MIN_WIDTH: u16 = 70;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let [top, body, status] = Layout::vertical([
-        Constraint::Length(1),
+        Constraint::Length(3), // framed title bar with the path chips
         Constraint::Min(0),
         Constraint::Length(1),
     ])
@@ -51,22 +51,62 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let main = if body.width >= SIDEBAR_MIN_WIDTH {
         let [side, main] =
-            Layout::horizontal([Constraint::Length(sidebar::WIDTH), Constraint::Fill(1)])
+            Layout::horizontal([Constraint::Length(sidebar::WIDTH + 2), Constraint::Fill(1)])
                 .areas(body);
-        let places = side.inner(Margin::new(0, 1));
+        let block = panel(" Places ", false);
+        let places = block.inner(side).inner(Margin::new(0, 1));
+        frame.render_widget(block, side);
         app.sidebar_area = places;
-        frame.render_widget(Block::new().style(Style::new().bg(BAR_BG)), side);
         frame.render_widget(Sidebar::new(&app.sidebar, &app.cwd), places);
         main
     } else {
         app.sidebar_area = Rect::default();
         body
     };
+    let files_focused = app.term_mode == TermMode::Hidden || app.focus == Focus::Files;
+    let title = match (&app.results, app.entry_count()) {
+        (Some(_), Some(n)) => format!(" Results · {} ", format::items(n)),
+        (None, Some(n)) => format!(" {} · {} ", folder_name(app), format::items(n)),
+        _ => format!(" {} ", folder_name(app)),
+    };
+    let block = panel(&title, files_focused);
+    let inner = block.inner(main);
+    frame.render_widget(block, main);
+    let main = inner;
     render_list(frame, app, main.inner(Margin::new(2, 1)));
     render_status_bar(frame, app, status);
 }
 
+/// A rounded panel with a title; the focused one gets the accent color (style A, fm-research LOG).
+fn panel(title: &str, focused: bool) -> Block<'static> {
+    let accent = liman_widgets::theme::type_color(liman_core::FileType::Folder);
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(if focused { accent } else { BAR_BG_BORDER }))
+        .title(
+            Span::raw(title.to_string())
+                .fg(if focused { FG } else { DIM })
+                .bold(),
+        )
+        .style(Style::new().bg(BG))
+}
+
+/// Border color of panels without focus: visible but quiet.
+const BAR_BG_BORDER: ratatui::style::Color = ratatui::style::Color::Rgb(70, 72, 86);
+
+fn folder_name(app: &App) -> String {
+    app.cwd
+        .file_name()
+        .map_or_else(|| "/".to_string(), |n| n.to_string_lossy().into_owned())
+}
+
 fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = panel(" liman ", false);
+    let area = block.inner(area);
+    frame.render_widget(
+        block,
+        Rect::new(area.x - 1, area.y - 1, area.width + 2, area.height + 2),
+    );
     app.path_bar_area = area;
     if let Some(results) = &app.results {
         let accent = liman_widgets::theme::type_color(liman_core::FileType::Folder);
@@ -81,7 +121,7 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             .fg(DIM),
             Span::raw("   Bksp/Esc back to the folder").fg(DIM),
         ]);
-        frame.render_widget(Paragraph::new(line).style(Style::new().bg(BAR_BG)), area);
+        frame.render_widget(Paragraph::new(line), area);
         return;
     }
     let line = breadcrumb::line(&app.path_segments());
@@ -361,14 +401,16 @@ mod tests {
     #[test]
     fn shows_path_loading_and_quit_hint() {
         let mut app = app("/home/test/Projects");
-        let mut terminal = Terminal::new(TestBackend::new(100, 8)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(140, 14)).unwrap();
         terminal.draw(|f| render(f, &mut app)).unwrap();
 
         let rows = rows(&terminal);
-        assert!(rows[0].contains("⌂ Home › Projects"));
+        assert!(rows[0].contains("liman")); // framed title bar
+        assert!(rows[1].contains(" ⌂ Home  ›  Projects ")); // path chips
         assert!(rows.iter().any(|r| r.contains("Loading")));
-        assert!(rows[2].contains("⌂ Home")); // sidebar
-        assert!(rows[7].contains("Del trash"));
+        assert!(rows[3].contains("Places") && rows[3].contains("Projects")); // panel titles
+        assert!(rows[5].contains("⌂ Home")); // sidebar
+        assert!(rows[13].contains("Del trash"));
     }
 
     #[test]
@@ -423,7 +465,7 @@ mod tests {
         }]);
         app.visible = vec![0];
         app.table.select(Some(0));
-        let mut terminal = Terminal::new(TestBackend::new(100, 8)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(140, 14)).unwrap();
         terminal.draw(|f| render(f, &mut app)).unwrap();
 
         let rows = rows(&terminal);
@@ -431,6 +473,6 @@ mod tests {
             rows.iter()
                 .any(|r| r.contains("RS") && r.contains("main.rs") && r.contains("13.8 kB"))
         );
-        assert!(rows[7].contains("1 item") && rows[7].contains("“main.rs” selected (13.8 kB)"));
+        assert!(rows[13].contains("1 item") && rows[13].contains("“main.rs” selected (13.8 kB)"));
     }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 
-use crate::theme::{DIM, FG};
+use crate::theme::{BAR_BG, DIM, FG, SELECTED_BG};
 
 const SEPARATOR: &str = " › ";
 
@@ -39,7 +39,7 @@ pub fn segments(path: &Path, home: &Path) -> Vec<Segment> {
     out
 }
 
-/// The path bar line; the last segment (current folder) is bright.
+/// The path bar line: each folder is a "chip" (`␣label␣` on a tinted background), the current one bright.
 pub fn line(segments: &[Segment]) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
     for (i, seg) in segments.iter().enumerate() {
@@ -47,11 +47,11 @@ pub fn line(segments: &[Segment]) -> Line<'static> {
             spans.push(Span::raw(SEPARATOR).fg(DIM));
         }
         let last = i + 1 == segments.len();
-        let span = Span::raw(seg.label.clone());
+        let chip = Span::raw(format!(" {} ", seg.label));
         spans.push(if last {
-            span.fg(FG).bold()
+            chip.fg(FG).bg(SELECTED_BG).bold()
         } else {
-            span.fg(DIM)
+            chip.fg(DIM).bg(BAR_BG)
         });
     }
     Line::from(spans)
@@ -65,7 +65,7 @@ pub fn segment_at(segments: &[Segment], x: u16, column: u16) -> Option<usize> {
         if i > 0 {
             start += Span::raw(SEPARATOR).width();
         }
-        let end = start + Span::raw(seg.label.as_str()).width();
+        let end = start + Span::raw(seg.label.as_str()).width() + 2; // chip padding
         if (start..end).contains(&column) {
             return Some(i);
         }
@@ -96,14 +96,14 @@ mod tests {
 
     #[test]
     fn segment_at_finds_the_label_under_the_mouse() {
-        // " ⌂ Home › Projects"  -> "⌂ Home" at 1..7, separator 7..10, "Projects" at 10..18
+        // " [ ⌂ Home ] › [ Projects ]" -> chip 1..9, separator 9..12, chip 12..22
         let segs = segments(Path::new("/home/u/Projects"), Path::new("/home/u"));
         assert_eq!(segment_at(&segs, 0, 0), None);
         assert_eq!(segment_at(&segs, 0, 1), Some(0));
-        assert_eq!(segment_at(&segs, 0, 6), Some(0));
-        assert_eq!(segment_at(&segs, 0, 8), None);
-        assert_eq!(segment_at(&segs, 0, 10), Some(1));
-        assert_eq!(segment_at(&segs, 0, 17), Some(1));
-        assert_eq!(segment_at(&segs, 0, 18), None);
+        assert_eq!(segment_at(&segs, 0, 8), Some(0));
+        assert_eq!(segment_at(&segs, 0, 10), None);
+        assert_eq!(segment_at(&segs, 0, 12), Some(1));
+        assert_eq!(segment_at(&segs, 0, 21), Some(1));
+        assert_eq!(segment_at(&segs, 0, 22), None);
     }
 }
