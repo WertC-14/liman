@@ -133,7 +133,8 @@ impl App {
             filter_editing: false,
             message: None,
             external: None,
-            view: View::Detailed,
+            // The grid with large icons is what sets liman apart, so it is the first thing you see.
+            view: View::Grid,
             drawn_view: View::Detailed,
             icons: HashMap::new(),
             icons_requested: HashSet::new(),
@@ -748,6 +749,8 @@ mod tests {
     #[test]
     fn plus_minus_and_ctrl_wheel_switch_views() {
         let (mut app, _rx) = app();
+        assert_eq!(app.view, View::Grid); // default
+        app.view = View::Detailed;
         app.handle(key(KeyCode::Char('+')));
         assert_eq!(app.view, View::Normal);
         app.handle(key(KeyCode::Char('+')));
@@ -793,9 +796,9 @@ mod tests {
 
     #[test]
     fn grid_view_requests_each_icon_kind_once() {
+        // The grid is the default view, so loading the folder already asked for the icons.
         let (mut app, rx) = app();
-        app.handle(key(KeyCode::Char('+')));
-        app.handle(key(KeyCode::Char('+')));
+        app.handle(key(KeyCode::Char('+'))); // already Grid: no second request
         // Other worker events (the initial listing of /data) may arrive first.
         while app.icons.is_empty() {
             let ev = rx
