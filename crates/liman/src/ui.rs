@@ -20,6 +20,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     render_screen(frame, app);
     if let Some(dialog) = &app.dialog {
         render_dialog(frame, dialog);
+    } else if app.branch_picker.is_some() {
+        render_branch_picker(frame, app);
+    } else if app.git_panel.is_some() {
+        render_git_panel(frame, app);
     } else if app.menu.is_some() {
         render_menu(frame, app);
     } else if app.theme_picker.is_some() {
@@ -108,6 +112,28 @@ fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
             ]));
             (" Paste ", lines)
         }
+        Dialog::ConfirmDiscard { paths } => {
+            let lines = vec![
+                Line::from(format!(
+                    "Throw away the changes in {}?",
+                    format::items(paths.len())
+                ))
+                .fg(theme::fg())
+                .bold(),
+                Line::from("Tracked files go back to the last commit; new files go to the trash.")
+                    .fg(theme::dim()),
+                Line::default(),
+                Line::from(vec![
+                    Span::raw(" y ")
+                        .bold()
+                        .fg(theme::type_color(liman_core::FileType::Pdf)),
+                    Span::raw("discard   ").fg(theme::fg()),
+                    Span::raw(" n / Esc ").bold().fg(theme::accent()),
+                    Span::raw("keep").fg(theme::fg()),
+                ]),
+            ];
+            (" Git: discard ", lines)
+        }
         Dialog::ConfirmDelete { paths } => {
             let what = match paths.as_slice() {
                 [one] => format!(
@@ -139,6 +165,111 @@ fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
     };
     let height = lines.len() as u16 + 4;
     let inner = popup(frame, title, 72, height);
+    frame.render_widget(Paragraph::new(lines), inner.inner(Margin::new(1, 1)));
+}
+
+/// Ctrl+G: changed files on the left (status letters, path in the repository), the selected file's
+/// diff on the right. Keys are listed in the frame title.
+fn render_git_panel(frame: &mut Frame, app: &mut App) {
+    app.git_panel_diff();
+    let (Some(git), Some(panel)) = (&app.git, &mut app.git_panel) else {
+        return;
+    };
+    let screen = frame.area();
+    let (w, h) = (
+        screen.width.saturating_sub(6).max(40),
+        screen.height.saturating_sub(4).max(10),
+    );
+    let title = format!(
+        " Git · ⎇ {} · Space stage/unstage · a all · c commit · d discard · p push · P pull · b branch · Enter show · Esc ",
+        git.summary()
+    );
+    let inner = popup(frame, &title, w, h);
+    let [list_area, diff_area] =
+        Layout::horizontal([Constraint::Percentage(35), Constraint::Fill(1)])
+            .spacing(1)
+            .areas(inner.inner(Margin::new(1, 1)));
+
+    if git.files.is_empty() {
+        frame.render_widget(
+            Paragraph::new("Working tree clean").fg(theme::dim()),
+            list_area,
+        );
+        return;
+    }
+    panel.selected = panel.selected.min(git.files.len() - 1);
+    let visible = usize::from(list_area.height);
+    let start = panel.selected.saturating_sub(visible.saturating_sub(1));
+    let lines: Vec<Line> = git
+        .files
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible)
+        .map(|(i, (path, mark))| {
+            let rel = path
+                .strip_prefix(&git.root)
+                .unwrap_or(path)
+                .display()
+                .to_string();
+            let mut spans = liman_widgets::gitmark::spans(Some(*mark));
+            spans.push(Span::raw(rel).fg(theme::fg()));
+            let line = Line::from(spans);
+            if i == panel.selected {
+                line.style(Style::new().bg(theme::selected_bg()))
+            } else {
+                line
+            }
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), list_area);
+
+    let added = theme::type_color(liman_core::FileType::Spreadsheet);
+    let removed = theme::type_color(liman_core::FileType::Pdf);
+    let hunk = theme::type_color(liman_core::FileType::Document);
+    panel.scroll = panel.scroll.min(panel.diff.len().saturating_sub(1));
+    let diff: Vec<Line> = panel
+        .diff
+        .iter()
+        .skip(panel.scroll)
+        .take(usize::from(diff_area.height))
+        .map(|l| {
+            let color = match l.chars().next() {
+                Some('+') if !l.starts_with("+++") => added,
+                Some('-') if !l.starts_with("---") => removed,
+                Some('@') => hunk,
+                _ => theme::dim(),
+            };
+            Line::from(Span::raw(l.clone()).fg(color))
+        })
+        .collect();
+    frame.render_widget(Clear, diff_area);
+    frame.render_widget(Paragraph::new(diff), diff_area);
+}
+
+fn render_branch_picker(frame: &mut Frame, app: &App) {
+    let Some((branches, selected)) = &app.branch_picker else {
+        return;
+    };
+    let inner = popup(
+        frame,
+        " Switch branch · Enter switch · Esc ",
+        48,
+        branches.len().min(16) as u16 + 4,
+    );
+    let lines: Vec<Line> = branches
+        .iter()
+        .enumerate()
+        .take(16)
+        .map(|(i, b)| {
+            let line = Line::from(format!(" ⎇ {b}")).fg(theme::fg());
+            if i == *selected {
+                line.style(Style::new().bg(theme::selected_bg())).bold()
+            } else {
+                line
+            }
+        })
+        .collect();
     frame.render_widget(Paragraph::new(lines), inner.inner(Margin::new(1, 1)));
 }
 
@@ -253,6 +384,10 @@ fn render_help(frame: &mut Frame) {
         ("t", "theme"),
         ("Ctrl+P / right click", "all commands / menu"),
         ("Ctrl+N / Alt+C", "new folder / copy path (works over SSH)"),
+        (
+            "Ctrl+G",
+            "git: changes, diff, stage, commit, push, pull, branch",
+        ),
         ("~", "home"),
         ("q", "quit"),
     ];
@@ -387,6 +522,25 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         Paragraph::new(line).style(Style::new().bg(theme::bar_bg())),
         area,
     );
+    // Git branch on the right: "⎇ main ↑1 ↓2" plus a count of changed files.
+    if let Some(git) = &app.git {
+        let changed = git.files.len();
+        let text = if changed > 0 {
+            format!(" ⎇ {} · {} changed  Ctrl+G ", git.summary(), changed)
+        } else {
+            format!(" ⎇ {}  Ctrl+G ", git.summary())
+        };
+        let width = text.chars().count() as u16;
+        if area.width > width + 20 {
+            let rect = Rect::new(area.right() - width, area.y, width, 1);
+            let color = if changed > 0 {
+                theme::type_color(liman_core::FileType::Presentation)
+            } else {
+                theme::type_color(liman_core::FileType::Spreadsheet)
+            };
+            frame.render_widget(Paragraph::new(Span::raw(text).fg(color).bold()), rect);
+        }
+    }
 }
 
 fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -401,22 +555,25 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
             // Borrow the fields directly (not through a method on `app`) so that `app.table`
             // can be borrowed mutably while `entries` is borrowed immutably.
             let rows: Vec<_> = app.visible.iter().map(|&i| &entries[i]).collect();
+            let git_marks = app.git.as_ref().map(|g| &g.marks);
             match app.drawn_view.list_mode() {
-                Some(mode) => frame.render_stateful_widget(
-                    FileList::new(&rows, format::now(), mode)
+                Some(mode) => {
+                    let mut list = FileList::new(&rows, format::now(), mode)
                         .marked(&app.marked)
-                        .sort(app.sort),
-                    area,
-                    &mut app.table,
-                ),
+                        .sort(app.sort);
+                    if let Some(marks) = git_marks {
+                        list = list.git(marks);
+                    }
+                    frame.render_stateful_widget(list, area, &mut app.table);
+                }
                 None => {
                     let wanted = app.grid_level.unwrap_or(grid::DEFAULT_LEVEL);
                     app.drawn_grid_level = grid::fitting_level(wanted, area);
-                    frame.render_stateful_widget(
-                        GridView::new(&rows, app.drawn_grid_level).marked(&app.marked),
-                        area,
-                        &mut app.table,
-                    );
+                    let mut grid = GridView::new(&rows, app.drawn_grid_level).marked(&app.marked);
+                    if let Some(marks) = git_marks {
+                        grid = grid.git(marks);
+                    }
+                    frame.render_stateful_widget(grid, area, &mut app.table);
                 }
             }
             return;
@@ -538,6 +695,18 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::from(spans))
                 .style(Style::new().fg(theme::fg()).bg(theme::bar_bg())),
+            area,
+        );
+        return;
+    }
+    if let Some(text) = &app.commit_input {
+        let line = Line::from(vec![
+            Span::raw(" ⎇ Commit message: ").fg(theme::dim()),
+            Span::raw(text.clone()).fg(theme::fg()).bold(),
+            Span::raw("▏   Enter commit · Esc cancel").fg(theme::dim()),
+        ]);
+        frame.render_widget(
+            Paragraph::new(line).style(Style::new().bg(theme::bar_bg())),
             area,
         );
         return;

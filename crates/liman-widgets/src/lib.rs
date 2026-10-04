@@ -6,6 +6,7 @@ pub mod badge;
 pub mod boxes;
 pub mod breadcrumb;
 pub mod file_list;
+pub mod gitmark;
 pub mod grid;
 pub mod sidebar;
 pub mod symbols;

@@ -79,3 +79,20 @@ pub fn spawn_search(
         });
     });
 }
+
+/// `git status` for the repository around `dir` (None outside a repository or without git).
+pub fn spawn_git_status(tx: Sender<AppEvent>, dir: PathBuf) {
+    thread::spawn(move || {
+        let status = liman_core::git::status(&dir);
+        let _ = tx.send(AppEvent::Git { dir, status });
+    });
+}
+
+/// Runs one git command (stage, commit, push, ...) and reports its output.
+pub fn spawn_git_command(tx: Sender<AppEvent>, dir: PathBuf, args: Vec<String>, label: String) {
+    thread::spawn(move || {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let result = liman_core::git::run(&dir, &refs);
+        let _ = tx.send(AppEvent::GitDone { label, result });
+    });
+}

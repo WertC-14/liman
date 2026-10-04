@@ -41,10 +41,26 @@ pub enum Action {
     Theme,
     Keys,
     Quit,
+    GitPanel,
+    GitStage,
+    GitUnstage,
+    GitDiscard,
+    GitCommit,
+    GitPush,
+    GitPull,
+    GitBranch,
 }
 
 impl Action {
-    pub const ALL: [Action; 32] = [
+    pub const ALL: [Action; 40] = [
+        Self::GitPanel,
+        Self::GitStage,
+        Self::GitUnstage,
+        Self::GitDiscard,
+        Self::GitCommit,
+        Self::GitPush,
+        Self::GitPull,
+        Self::GitBranch,
         Self::Open,
         Self::PathsToTerminal,
         Self::OpenTerminalHere,
@@ -80,7 +96,7 @@ impl Action {
     ];
 
     /// Right-click on an entry.
-    pub const ON_ENTRY: [Action; 10] = [
+    pub const ON_ENTRY: [Action; 13] = [
         Self::Open,
         Self::PathsToTerminal,
         Self::Copy,
@@ -91,6 +107,9 @@ impl Action {
         Self::Trash,
         Self::DeleteForGood,
         Self::Paste,
+        Self::GitStage,
+        Self::GitUnstage,
+        Self::GitDiscard,
     ];
 
     /// Right-click on empty space in the list.
@@ -138,6 +157,14 @@ impl Action {
             Self::Theme => "Theme…",
             Self::Keys => "All keys",
             Self::Quit => "Quit",
+            Self::GitPanel => "Git: panel (changes, diff)",
+            Self::GitStage => "Git: stage",
+            Self::GitUnstage => "Git: unstage",
+            Self::GitDiscard => "Git: discard changes",
+            Self::GitCommit => "Git: commit",
+            Self::GitPush => "Git: push",
+            Self::GitPull => "Git: pull",
+            Self::GitBranch => "Git: switch branch",
         }
     }
 
@@ -175,6 +202,13 @@ impl Action {
             Self::Theme => "t",
             Self::Keys => "?",
             Self::Quit => "q",
+            Self::GitPanel => "Ctrl+G",
+            Self::GitStage | Self::GitUnstage => "Ctrl+G Space",
+            Self::GitDiscard => "Ctrl+G d",
+            Self::GitCommit => "Ctrl+G c",
+            Self::GitPush => "Ctrl+G p",
+            Self::GitPull => "Ctrl+G P",
+            Self::GitBranch => "Ctrl+G b",
         }
     }
 }
@@ -245,6 +279,14 @@ impl App {
             Action::Theme => self.open_theme_picker(),
             Action::Keys => self.help_open = true,
             Action::Quit => self.running = false,
+            Action::GitPanel => self.toggle_git_panel(),
+            Action::GitStage => self.git_stage(),
+            Action::GitUnstage => self.git_unstage(),
+            Action::GitDiscard => self.ask_git_discard(),
+            Action::GitCommit => self.begin_git_commit(),
+            Action::GitPush => self.git_push(),
+            Action::GitPull => self.git_pull(),
+            Action::GitBranch => self.open_branch_picker(),
         }
     }
 
@@ -300,6 +342,14 @@ impl App {
             Action::Back => !self.back_stack.is_empty(),
             Action::Forward => !self.forward_stack.is_empty(),
             Action::NewFolder => self.results.is_none(),
+            Action::GitStage | Action::GitUnstage | Action::GitDiscard => {
+                self.git.is_some() && has_entry
+            }
+            Action::GitPanel
+            | Action::GitCommit
+            | Action::GitPush
+            | Action::GitPull
+            | Action::GitBranch => self.git.is_some(),
             Action::ZoomIn => {
                 self.view != View::Grid
                     || self.drawn_grid_level + 1 < liman_widgets::grid::BOX_SIZES.len()

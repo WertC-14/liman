@@ -2,10 +2,12 @@
 
 mod actions;
 mod file_ops;
+mod git_ops;
 mod terminal_mode;
 
 pub use actions::{Action, Menu};
 pub use file_ops::{ClipMode, Clipboard, Dialog, JobStatus, RenameInput};
+pub use git_ops::GitPanel;
 pub use terminal_mode::{Focus, TermMode};
 
 use std::collections::HashSet;
@@ -165,6 +167,17 @@ pub struct App {
     drag: Option<Drag>,
     /// The large view `v` returns to from the compact list.
     last_large_view: View,
+    /// Git status of the repository around the open folder (None outside one).
+    pub git: Option<liman_core::git::GitStatus>,
+    /// `g`: the git panel.
+    pub git_panel: Option<GitPanel>,
+    /// Commit message being typed.
+    pub commit_input: Option<String>,
+    /// `b` in the git panel: branches and the highlighted one.
+    pub branch_picker: Option<(Vec<String>, usize)>,
+    /// A `git status` is running; `git_again` asks for one more when it is done.
+    git_busy: bool,
+    git_again: bool,
     /// Watches the open folder for changes made by anyone.
     watch: crate::watch::FolderWatch,
     /// Command palette (Ctrl+P) or right-click menu.
@@ -246,6 +259,12 @@ impl App {
             search_input: None,
             dialog: None,
             watch: crate::watch::FolderWatch::start(tx.clone()),
+            git: None,
+            git_busy: false,
+            git_panel: None,
+            commit_input: None,
+            branch_picker: None,
+            git_again: false,
             menu: None,
             menu_area: Rect::default(),
             rename_after_load: false,
@@ -284,6 +303,16 @@ impl App {
         self.results_pending = None;
         self.start_loading(&path);
         worker::spawn_listing(self.tx.clone(), self.generation, path, self.options);
+    }
+
+    /// Asks for `git status` of the open folder (at most one at a time; asks again when it ends).
+    pub fn request_git(&mut self) {
+        if self.git_busy {
+            self.git_again = true;
+            return;
+        }
+        self.git_busy = true;
+        worker::spawn_git_status(self.tx.clone(), self.cwd.clone());
     }
 
     /// Reads the open folder again without blanking the view: the old list stays until the new one
@@ -351,6 +380,17 @@ impl App {
                     self.refresh();
                 }
             }
+            AppEvent::Git { dir, status } => {
+                self.git_busy = false;
+                if dir == self.cwd {
+                    self.git = status;
+                    self.dirty = true;
+                }
+                if std::mem::take(&mut self.git_again) {
+                    self.request_git();
+                }
+            }
+            AppEvent::GitDone { label, result } => self.on_git_done(label, result),
             AppEvent::TermQuiet => {
                 let Some(term) = &mut self.terminal else {
                     return;
@@ -419,6 +459,15 @@ impl App {
         if self.menu.is_some() {
             return self.on_menu_key(key);
         }
+        if self.commit_input.is_some() {
+            return self.on_commit_key(key);
+        }
+        if self.branch_picker.is_some() {
+            return self.on_branch_key(key);
+        }
+        if self.git_panel.is_some() {
+            return self.on_git_panel_key(key);
+        }
         if self.theme_picker.is_some() {
             return self.on_picker_key(key);
         }
@@ -466,6 +515,7 @@ impl App {
             KeyCode::Char('f') if ctrl => self.search_input = Some(String::new()),
             KeyCode::Char('d') if ctrl => self.toggle_bookmark(),
             KeyCode::Char('p') if ctrl => self.open_palette(),
+            KeyCode::Char('g') if ctrl => self.toggle_git_panel(),
             // Ctrl+Shift+N / Ctrl+Shift+C arrive as Ctrl+N / Ctrl+C in most terminals: use Ctrl+N, Alt+C.
             KeyCode::Char('n') if ctrl => self.new_folder(),
             KeyCode::Char('c') if alt => self.copy_paths_osc52(),
@@ -1317,6 +1367,14 @@ impl App {
             .and_then(|name| self.visible_entries().iter().position(|e| e.name == name))
             .unwrap_or(0);
         self.select_row(row);
+        if self
+            .git
+            .as_ref()
+            .is_none_or(|g| !self.cwd.starts_with(&g.root))
+        {
+            self.git = None; // left the repository; the new status arrives soon
+        }
+        self.request_git();
         if std::mem::take(&mut self.rename_after_load) {
             self.begin_rename();
         }

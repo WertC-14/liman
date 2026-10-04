@@ -42,8 +42,16 @@ pub enum Conflict {
 /// A question shown in the middle of the screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
-    Conflict { existing: Vec<PathBuf> },
-    ConfirmDelete { paths: Vec<PathBuf> },
+    Conflict {
+        existing: Vec<PathBuf>,
+    },
+    ConfirmDelete {
+        paths: Vec<PathBuf>,
+    },
+    /// Throw away uncommitted changes (git restore; untracked files to the trash).
+    ConfirmDiscard {
+        paths: Vec<PathBuf>,
+    },
 }
 
 /// F2: the new name being typed.
@@ -214,6 +222,7 @@ impl App {
                 );
                 self.start_job(Job::Delete { paths }, label);
             }
+            (Dialog::ConfirmDiscard { paths }, KeyCode::Char('y')) => self.git_discard(paths),
             (_, KeyCode::Esc | KeyCode::Char('n' | 'q')) => {}
             (dialog, _) => self.dialog = Some(dialog), // other keys: keep asking
         }

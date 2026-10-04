@@ -4,10 +4,11 @@
 //! Uses a `TableState` as state (selected index; offset = first visible tile row) so the app keeps
 //! one selection across all three views.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use liman_core::Entry;
+use liman_core::git::GitMark;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -47,6 +48,7 @@ pub struct GridView<'a> {
     entries: &'a [&'a Entry],
     marked: Option<&'a HashSet<PathBuf>>,
     level: usize,
+    git: Option<&'a HashMap<PathBuf, GitMark>>,
 }
 
 impl<'a> GridView<'a> {
@@ -55,7 +57,14 @@ impl<'a> GridView<'a> {
             entries,
             marked: None,
             level: level.min(BOX_SIZES.len() - 1),
+            git: None,
         }
+    }
+
+    /// Inside a git repository: status letters before each changed name.
+    pub fn git(mut self, marks: &'a HashMap<PathBuf, GitMark>) -> Self {
+        self.git = Some(marks);
+        self
     }
 
     pub fn marked(mut self, marked: &'a HashSet<PathBuf>) -> Self {
@@ -162,7 +171,11 @@ impl GridView<'_> {
         } else {
             Color::White
         };
-        let mut spans = vec![Span::styled(name, Style::new().fg(color))];
+        let mut spans = Vec::new();
+        if let Some(mark) = self.git.and_then(|m| m.get(&entry.path)) {
+            spans.extend(crate::gitmark::spans(Some(*mark)));
+        }
+        spans.push(Span::styled(name, Style::new().fg(color)));
         if entry.is_symlink {
             spans.push(Span::styled(" ↗", Style::new().fg(theme::dim())));
         }

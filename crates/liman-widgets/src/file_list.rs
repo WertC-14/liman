@@ -6,11 +6,12 @@
 //! It is a `StatefulWidget`: the caller keeps a `TableState` (selected row, scroll offset)
 //! between frames, the widget itself is rebuilt every frame.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use liman_core::Entry;
 use liman_core::format::{self, Timestamp};
+use liman_core::git::GitMark;
 use liman_core::sort::{SortKey, SortOrder};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -19,6 +20,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 
 use crate::boxes;
+use crate::gitmark;
 use crate::theme;
 
 const COLUMN_SPACING: u16 = 2;
@@ -61,6 +63,7 @@ pub struct FileList<'a> {
     mode: ListMode,
     marked: Option<&'a HashSet<PathBuf>>,
     sort: Option<SortOrder>,
+    git: Option<&'a HashMap<PathBuf, GitMark>>,
 }
 
 impl<'a> FileList<'a> {
@@ -72,7 +75,14 @@ impl<'a> FileList<'a> {
             mode,
             marked: None,
             sort: None,
+            git: None,
         }
+    }
+
+    /// Inside a git repository: status letters before each name.
+    pub fn git(mut self, marks: &'a HashMap<PathBuf, GitMark>) -> Self {
+        self.git = Some(marks);
+        self
     }
 
     /// Shows ▲/▼ next to the sorted column in the header.
@@ -134,6 +144,9 @@ impl<'a> FileList<'a> {
     fn row(&self, entry: &Entry) -> Row<'static> {
         let is_marked = self.marked.is_some_and(|m| m.contains(&entry.path));
         let mut name = Vec::new();
+        if let Some(marks) = self.git {
+            name.extend(gitmark::spans(marks.get(&entry.path).copied()));
+        }
         if is_marked {
             name.push(Span::raw("✓ ").bold());
         }

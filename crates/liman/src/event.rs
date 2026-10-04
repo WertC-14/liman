@@ -29,6 +29,16 @@ pub enum AppEvent {
     JobFinished(Outcome),
     /// Bytes the embedded shell wrote.
     TermOutput(Vec<u8>),
+    /// `git status` finished for the repository around `dir`.
+    Git {
+        dir: PathBuf,
+        status: Option<liman_core::git::GitStatus>,
+    },
+    /// A git command finished: what was done and its output (or error text).
+    GitDone {
+        label: String,
+        result: Result<String, String>,
+    },
     /// Something changed in this folder (after a short quiet period).
     FolderChanged(PathBuf),
     /// The embedded shell exited.
