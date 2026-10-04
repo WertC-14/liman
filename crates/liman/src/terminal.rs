@@ -9,13 +9,23 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::event::AppEvent;
+
+/// Start-up output counts as finished after this much silence.
+const QUIET: Duration = Duration::from_millis(300);
+/// A prompt may span a few lines; the cursor this close to the top means the screen is clean.
+const MAX_PROMPT_LINES: u16 = 2;
+/// Give up waiting for a quiet moment after this long (a shell that prints forever).
+const STARTUP_LIMIT: Duration = Duration::from_secs(10);
 
 /// Lines kept above the screen (not shown yet, but programs like `less` expect it to exist).
 const SCROLLBACK: usize = 1000;
@@ -26,6 +36,8 @@ pub struct Terminal {
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
     size: (u16, u16),
+    /// Whether the start-up output (greeting, fastfetch, ...) has been cleared away yet.
+    greeting_cleared: bool,
 }
 
 impl Terminal {
@@ -62,19 +74,43 @@ impl Terminal {
 
         let mut reader = pair.master.try_clone_reader().map_err(anyhow_lite::from)?;
         let writer = pair.master.take_writer().map_err(anyhow_lite::from)?;
+        let started = Instant::now();
+        let last_output = Arc::new(AtomicU64::new(0)); // ms since `started`
+        let reader_tx = tx.clone();
+        let reader_last = last_output.clone();
         thread::spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        if tx.send(AppEvent::TermOutput(buf[..n].to_vec())).is_err() {
+                        reader_last.store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
+                        if reader_tx
+                            .send(AppEvent::TermOutput(buf[..n].to_vec()))
+                            .is_err()
+                        {
                             return;
                         }
                     }
                 }
             }
-            let _ = tx.send(AppEvent::TermExited);
+            let _ = reader_tx.send(AppEvent::TermExited);
+        });
+        // Start-up watcher: each burst of output followed by QUIET silence is reported once.
+        // (A shell may print a little, run fastfetch silently for a while, then print more.)
+        thread::spawn(move || {
+            let mut reported = 0;
+            while started.elapsed() < STARTUP_LIMIT {
+                thread::sleep(Duration::from_millis(50));
+                let last = last_output.load(Ordering::Relaxed);
+                let now = started.elapsed().as_millis() as u64;
+                if last > reported && now - last >= QUIET.as_millis() as u64 {
+                    reported = last;
+                    if tx.send(AppEvent::TermQuiet).is_err() {
+                        return;
+                    }
+                }
+            }
         });
 
         Ok(Self {
@@ -83,6 +119,7 @@ impl Terminal {
             writer,
             child,
             size: (rows, cols),
+            greeting_cleared: false,
         })
     }
 
@@ -92,6 +129,21 @@ impl Terminal {
 
     pub fn process(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
+    }
+
+    /// The shell went quiet during start-up. The panel is small, so drop the greeting
+    /// (fastfetch, MOTD, ...): Ctrl+L at the prompt clears the screen and redraws just the prompt
+    /// (bash, zsh, fish). Done once the prompt sits at the top; a Ctrl+L that arrived too early
+    /// (while the greeting was still running) is simply sent again at the next quiet moment.
+    pub fn on_quiet(&mut self) {
+        if self.greeting_cleared || !self.is_idle() {
+            return;
+        }
+        if self.screen().cursor_position().0 <= MAX_PROMPT_LINES {
+            self.greeting_cleared = true;
+        } else {
+            self.send(b"\x0c");
+        }
     }
 
     /// Matches the pty and the parser to the area the UI draws into.

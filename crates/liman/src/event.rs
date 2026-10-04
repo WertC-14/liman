@@ -31,6 +31,8 @@ pub enum AppEvent {
     TermOutput(Vec<u8>),
     /// The embedded shell exited.
     TermExited,
+    /// The embedded shell finished its start-up output (time to clear the greeting).
+    TermQuiet,
 }
 
 /// How long the input thread waits for input before checking the pause flag again.

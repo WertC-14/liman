@@ -208,6 +208,11 @@ impl App {
             AppEvent::JobFinished(outcome) => self.on_job_finished(outcome),
             AppEvent::TermOutput(bytes) => self.on_term_output(&bytes),
             AppEvent::TermExited => self.on_term_exited(),
+            AppEvent::TermQuiet => {
+                if let Some(term) = &mut self.terminal {
+                    term.on_quiet();
+                }
+            }
         }
     }
 
