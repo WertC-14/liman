@@ -113,6 +113,9 @@ impl App {
         };
         term.process(bytes);
         self.dirty = true;
+        if term.is_syncing() {
+            return; // the shell is on its way to where the view already is
+        }
         let Some(shell_cwd) = term.cwd() else {
             return;
         };
@@ -141,7 +144,8 @@ impl App {
         let Some(term) = &mut self.terminal else {
             return;
         };
-        if self.last_shell_cwd.as_ref() != Some(path) && term.cd(path) {
+        if self.last_shell_cwd.as_ref() != Some(path) {
+            term.cd(path);
             self.last_shell_cwd = Some(path.clone());
         }
     }

@@ -34,11 +34,29 @@ pub struct Terminal {
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
     size: (u16, u16),
-    /// Whether the start-up output (greeting, fastfetch, ...) has been cleared away yet.
-    greeting_cleared: bool,
+    /// Clearing the start-up output (greeting, fastfetch, ...).
+    greeting: Greeting,
+    /// The user typed something: leave the screen alone from now on.
+    user_typed: bool,
+    /// Folder the file view wants the shell in, waiting for the previous `cd` to finish.
+    pending_cd: Option<PathBuf>,
+    /// The `cd` sent last and when; the next one waits until the shell is there (or 2 s passed).
+    cd_in_flight: Option<(PathBuf, Instant)>,
     /// Output of the command line the user is running (from Enter until the prompt is back).
     capture: Option<Capture>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Greeting {
+    /// Nothing sent yet.
+    Waiting,
+    /// Ctrl+L sent; done once the prompt is at the top after a quiet moment.
+    Sent,
+    Done,
+}
+
+/// A `cd` the shell has not carried out after this long (no permission, ...) is given up on.
+const CD_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct Capture {
     command: String,
@@ -135,7 +153,10 @@ impl Terminal {
             writer,
             child,
             size: (rows, cols),
-            greeting_cleared: false,
+            greeting: Greeting::Waiting,
+            user_typed: false,
+            pending_cd: None,
+            cd_in_flight: None,
             capture: None,
         })
     }
@@ -146,6 +167,7 @@ impl Terminal {
 
     pub fn process(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
+        self.flush_cd();
         if let Some(capture) = &mut self.capture
             && capture.bytes.len() < MAX_CAPTURE
         {
@@ -153,17 +175,25 @@ impl Terminal {
         }
     }
 
-    /// The shell went quiet during start-up. The panel is small, so drop the greeting
-    /// (fastfetch, MOTD, ...): Ctrl+L at the prompt clears the screen and redraws just the prompt
-    /// (bash, zsh, fish). Done once the prompt sits at the top; a Ctrl+L that arrived too early
-    /// (while the greeting was still running) is simply sent again at the next quiet moment.
+    /// The shell went quiet: clear the start-up greeting and send a waiting `cd`.
+    ///
+    /// The panel is small, so the greeting (fastfetch, MOTD, ...) is dropped with Ctrl+L at the
+    /// prompt, which clears the screen and redraws just the prompt (bash, zsh, fish). A greeting may
+    /// start printing after a pause, so Ctrl+L is repeated until the prompt stays at the top.
     pub fn on_quiet(&mut self) {
-        if self.greeting_cleared || !self.is_idle() || self.capture.is_some() {
+        self.flush_cd();
+        if self.greeting == Greeting::Done
+            || self.user_typed
+            || !self.is_idle()
+            || self.capture.is_some()
+        {
             return;
         }
-        if self.screen().cursor_position().0 <= MAX_PROMPT_LINES {
-            self.greeting_cleared = true;
+        if self.greeting == Greeting::Sent && self.screen().cursor_position().0 <= MAX_PROMPT_LINES
+        {
+            self.greeting = Greeting::Done;
         } else {
+            self.greeting = Greeting::Sent;
             self.send(b"\x0c");
         }
     }
@@ -180,6 +210,7 @@ impl Terminal {
     }
 
     pub fn send_key(&mut self, key: KeyEvent) {
+        self.user_typed = true;
         if key.code == KeyCode::Enter && self.is_idle() {
             // A command line is about to run: remember it and collect what it prints.
             self.capture = Some(Capture {
@@ -230,15 +261,48 @@ impl Terminal {
         shell.is_some() && self.master.process_group_leader() == shell
     }
 
-    /// Makes the shell change to `dir`. Only when idle, so we never type into `vim` or a running build.
-    /// The leading space keeps the command out of bash/zsh history (with `ignorespace`).
-    pub fn cd(&mut self, dir: &Path) -> bool {
-        if !self.is_idle() {
-            return false;
+    /// Makes the shell change to `dir`, one `cd` at a time: while one is on its way, newer requests
+    /// replace each other and only the last is sent. Never typed while a program runs or while the
+    /// user has text on the command line. Each `cd` is followed by Ctrl+L, so the panel shows just
+    /// the prompt in the new folder. The leading space keeps it out of history (`ignorespace`).
+    pub fn cd(&mut self, dir: &Path) {
+        self.pending_cd = Some(dir.to_path_buf());
+        self.flush_cd();
+    }
+
+    /// True while a `cd` from the file view is waiting or on its way; the shell's folder may be an
+    /// intermediate one then and must not be followed.
+    pub fn is_syncing(&self) -> bool {
+        self.pending_cd.is_some() || self.cd_in_flight.is_some()
+    }
+
+    fn flush_cd(&mut self) {
+        if let Some((dir, sent)) = &self.cd_in_flight {
+            if self.cwd().as_ref() != Some(dir) && sent.elapsed() < CD_TIMEOUT {
+                return; // still on its way
+            }
+            self.cd_in_flight = None;
+        }
+        let Some(dir) = self.pending_cd.take() else {
+            return;
+        };
+        if self.cwd().as_ref() == Some(&dir) {
+            return;
+        }
+        if !self.is_idle() || !self.typed_text().is_empty() {
+            self.pending_cd = Some(dir); // try again at the next quiet moment
+            return;
         }
         let quoted = dir.to_string_lossy().replace('\'', r"'\''");
-        self.send(format!(" cd -- '{quoted}'\r").as_bytes());
-        true
+        self.send(format!(" cd -- '{quoted}'\r\x0c").as_bytes());
+        self.cd_in_flight = Some((dir, Instant::now()));
+    }
+
+    /// What the user typed on the command line so far (left of the cursor, so fish's grey
+    /// autosuggestion to the right does not count).
+    fn typed_text(&self) -> String {
+        let (row, col) = self.screen().cursor_position();
+        strip_prompt(&self.screen().contents_between(row, 0, row, col))
     }
 }
 
@@ -417,7 +481,7 @@ mod tests {
             .contains("liman-42")));
 
         assert!(pump(&mut term, &rx, |t| t.is_idle()));
-        assert!(term.cd(Path::new("/")));
+        term.cd(Path::new("/"));
         assert!(pump(&mut term, &rx, |t| t.cwd().as_deref()
             == Some(Path::new("/"))));
     }
