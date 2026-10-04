@@ -6,8 +6,11 @@ use std::thread;
 
 use std::time::{Duration, Instant};
 
+use std::sync::{Arc, OnceLock};
+
+use liman_core::icons::{IconTheme, detect_theme_name, load_icon};
 use liman_core::job::Job;
-use liman_core::{ListOptions, list_dir};
+use liman_core::{Entry, ListOptions, list_dir};
 
 use crate::event::AppEvent;
 
@@ -39,5 +42,24 @@ pub fn spawn_job(tx: Sender<AppEvent>, job: Job, trash_dir: PathBuf) {
             }
         });
         let _ = tx.send(AppEvent::JobFinished(outcome));
+    });
+}
+
+/// Renders icons for the grid. The icon theme is looked up once (it spawns `gsettings` and reads
+/// many directories), by whichever icon worker runs first.
+pub fn spawn_icons(
+    tx: Sender<AppEvent>,
+    theme: Arc<OnceLock<IconTheme>>,
+    home: PathBuf,
+    wanted: Vec<(String, Entry)>,
+) {
+    thread::spawn(move || {
+        let theme =
+            theme.get_or_init(|| IconTheme::load(detect_theme_name(&home).as_deref(), &home));
+        let icons = wanted
+            .into_iter()
+            .map(|(key, entry)| (key, load_icon(&entry, theme)))
+            .collect();
+        let _ = tx.send(AppEvent::Icons(icons));
     });
 }

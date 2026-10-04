@@ -4,15 +4,17 @@ mod file_ops;
 
 pub use file_ops::{ClipMode, Clipboard, JobStatus, RenameInput};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use liman_core::icons::{IconPixels, IconTheme, icon_key};
 use liman_core::job::Done;
 use liman_core::{Entry, ListOptions, Place, Places, trash};
 use liman_widgets::breadcrumb::{self, Segment};
-use liman_widgets::{FileList, ListMode, Sidebar};
+use liman_widgets::{FileList, GridView, ListMode, Sidebar};
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -27,6 +29,33 @@ use crate::worker;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Rows moved per mouse wheel step.
 const WHEEL_STEP: isize = 3;
+
+/// The three views of ADR 0003, smallest first. `+` / `-` step through them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Detailed,
+    Normal,
+    Grid,
+}
+
+impl View {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Detailed => "Detailed",
+            Self::Normal => "Normal",
+            Self::Grid => "Grid",
+        }
+    }
+
+    /// The file list mode for the two list views; `None` for the grid.
+    pub const fn list_mode(self) -> Option<ListMode> {
+        match self {
+            Self::Detailed => Some(ListMode::Detailed),
+            Self::Normal => Some(ListMode::Normal),
+            Self::Grid => None,
+        }
+    }
+}
 
 /// What the body of the window shows.
 pub enum Listing {
@@ -54,9 +83,9 @@ pub struct App {
     /// A terminal program the main loop should run in the foreground (set by Enter on a file over SSH).
     pub external: Option<(String, PathBuf)>,
     /// View chosen by the user (`+` / `-`, Ctrl+wheel).
-    pub view: ListMode,
+    pub view: View,
     /// View actually drawn last frame; smaller than `view` when the terminal is too small. Written by the UI.
-    pub drawn_view: ListMode,
+    pub drawn_view: View,
     /// Where the list was drawn last frame, for mouse hit-testing. Written by the UI.
     pub list_area: Rect,
     /// Where the sidebar was drawn last frame (empty when hidden). Written by the UI.
@@ -74,6 +103,12 @@ pub struct App {
     pub history: Vec<Done>,
     /// F2 rename in progress.
     pub rename: Option<RenameInput>,
+    /// Rendered icons for the grid, by `icon_key`.
+    pub icons: HashMap<String, IconPixels>,
+    /// Keys already sent to the icon worker (loaded or on their way).
+    icons_requested: HashSet<String>,
+    /// The icon theme, loaded once by the first icon worker.
+    icon_theme: Arc<OnceLock<IconTheme>>,
     trash_dir: PathBuf,
     /// Incremented on every listing request; older results are ignored.
     generation: u64,
@@ -98,8 +133,11 @@ impl App {
             filter_editing: false,
             message: None,
             external: None,
-            view: ListMode::Detailed,
-            drawn_view: ListMode::Detailed,
+            view: View::Detailed,
+            drawn_view: View::Detailed,
+            icons: HashMap::new(),
+            icons_requested: HashSet::new(),
+            icon_theme: Arc::new(OnceLock::new()),
             list_area: Rect::default(),
             sidebar_area: Rect::default(),
             path_bar_area: Rect::default(),
@@ -146,6 +184,10 @@ impl App {
             } => self.on_listing(generation, path, result),
             AppEvent::JobProgress { done } => self.on_job_progress(done),
             AppEvent::JobFinished(outcome) => self.on_job_finished(outcome),
+            AppEvent::Icons(icons) => {
+                self.icons.extend(icons);
+                self.dirty = true;
+            }
         }
     }
 
@@ -192,8 +234,15 @@ impl App {
             KeyCode::Char(' ') => self.toggle_mark(),
             KeyCode::Esc if !self.filter.is_empty() => self.set_filter(String::new()),
             KeyCode::Esc => self.marked.clear(),
-            KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
-            KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
+            // In the grid, left/right move between tiles and up/down jump a row (like Nautilus).
+            KeyCode::Right | KeyCode::Char('l') if self.drawn_view == View::Grid => {
+                self.move_selection(1)
+            }
+            KeyCode::Left | KeyCode::Char('h') if self.drawn_view == View::Grid => {
+                self.move_selection(-1)
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.move_selection(self.vertical_step()),
+            KeyCode::Up | KeyCode::Char('k') => self.move_selection(-self.vertical_step()),
             KeyCode::PageDown => self.move_selection(self.page()),
             KeyCode::PageUp => self.move_selection(-self.page()),
             KeyCode::Home | KeyCode::Char('g') => self.select_row(0),
@@ -264,13 +313,11 @@ impl App {
             }
             return;
         }
-        let Some(index) = FileList::row_at(
-            self.list_area,
-            self.table.offset(),
-            self.drawn_view,
-            column,
-            row,
-        ) else {
+        let hit = match self.drawn_view.list_mode() {
+            Some(mode) => FileList::row_at(self.list_area, self.table.offset(), mode, column, row),
+            None => GridView::index_at(self.list_area, self.table.offset(), column, row),
+        };
+        let Some(index) = hit else {
             return;
         };
         if index >= self.visible.len() {
@@ -297,21 +344,69 @@ impl App {
 
     /// Entries that fit on one screen; at least one.
     fn page(&self) -> isize {
-        let rows = self
-            .list_area
-            .height
-            .saturating_sub(liman_widgets::file_list::HEADER_HEIGHT)
-            / self.drawn_view.row_height();
-        isize::try_from(rows).unwrap_or(1).max(1)
+        let entries = match self.drawn_view.list_mode() {
+            Some(mode) => usize::from(
+                self.list_area
+                    .height
+                    .saturating_sub(liman_widgets::file_list::HEADER_HEIGHT)
+                    / mode.row_height(),
+            ),
+            None => {
+                usize::from(self.list_area.height / liman_widgets::grid::TILE_HEIGHT)
+                    * self.grid_columns()
+            }
+        };
+        isize::try_from(entries).unwrap_or(1).max(1)
     }
 
-    /// Steps between the views: Detailed (0) and Normal (1). Grid comes later (ROADMAP item 10).
+    /// Steps between the views: Detailed → Normal → Grid.
     fn zoom(&mut self, step: i8) {
         self.view = match (self.view, step.signum()) {
-            (ListMode::Detailed, 1) => ListMode::Normal,
-            (ListMode::Normal, -1) => ListMode::Detailed,
+            (View::Detailed, 1) => View::Normal,
+            (View::Normal, 1) => View::Grid,
+            (View::Grid, -1) => View::Normal,
+            (View::Normal, -1) => View::Detailed,
             (view, _) => view,
         };
+        self.request_icons();
+    }
+
+    /// Asks the worker for icons the grid will need and that are not loaded yet.
+    pub fn request_icons(&mut self) {
+        if self.view != View::Grid {
+            return;
+        }
+        let Listing::Ready(entries) = &self.listing else {
+            return;
+        };
+        let mut wanted = Vec::new();
+        for entry in entries {
+            let key = icon_key(entry);
+            if self.icons_requested.insert(key.clone()) {
+                wanted.push((key, entry.clone()));
+            }
+        }
+        if !wanted.is_empty() {
+            worker::spawn_icons(
+                self.tx.clone(),
+                self.icon_theme.clone(),
+                self.places.home.clone(),
+                wanted,
+            );
+        }
+    }
+
+    /// Tiles per row in the grid as drawn last frame.
+    fn grid_columns(&self) -> usize {
+        GridView::columns(self.list_area.width)
+    }
+
+    /// Rows move by one entry in the lists, by a whole tile row in the grid.
+    fn vertical_step(&self) -> isize {
+        match self.drawn_view {
+            View::Grid => isize::try_from(self.grid_columns()).unwrap_or(1),
+            _ => 1,
+        }
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -408,6 +503,7 @@ impl App {
             .and_then(|name| self.visible_entries().iter().position(|e| e.name == name))
             .unwrap_or(0);
         self.select_row(row);
+        self.request_icons();
         self.dirty = true;
     }
 
@@ -653,11 +749,14 @@ mod tests {
     fn plus_minus_and_ctrl_wheel_switch_views() {
         let (mut app, _rx) = app();
         app.handle(key(KeyCode::Char('+')));
-        assert_eq!(app.view, ListMode::Normal);
-        app.handle(key(KeyCode::Char('+'))); // already the largest list view
-        assert_eq!(app.view, ListMode::Normal);
+        assert_eq!(app.view, View::Normal);
+        app.handle(key(KeyCode::Char('+')));
+        assert_eq!(app.view, View::Grid);
+        app.handle(key(KeyCode::Char('+'))); // already the largest view
+        assert_eq!(app.view, View::Grid);
         app.handle(key(KeyCode::Char('-')));
-        assert_eq!(app.view, ListMode::Detailed);
+        app.handle(key(KeyCode::Char('-')));
+        assert_eq!(app.view, View::Detailed);
 
         app.handle(AppEvent::Input(Event::Mouse(MouseEvent {
             kind: MouseEventKind::ScrollUp,
@@ -665,17 +764,54 @@ mod tests {
             row: 5,
             modifiers: KeyModifiers::CONTROL,
         })));
-        assert_eq!(app.view, ListMode::Normal);
+        assert_eq!(app.view, View::Normal);
         assert_eq!(selected_name(&app), "Music"); // Ctrl+wheel does not move the selection
     }
 
     #[test]
     fn clicks_use_the_drawn_view() {
         let (mut app, _rx) = app();
-        app.drawn_view = ListMode::Normal;
+        app.drawn_view = View::Normal;
         // list_area.y = 2, rows start at 4; entry 1 (Projects) spans rows 9..=12
         app.handle(click(30, 10));
         assert_eq!(selected_name(&app), "Projects");
+    }
+
+    #[test]
+    fn grid_arrows_move_by_tile_and_by_row() {
+        let (mut app, _rx) = app();
+        app.drawn_view = View::Grid;
+        app.list_area = Rect::new(24, 2, 40, 30); // 2 tiles per row
+        app.handle(key(KeyCode::Right));
+        assert_eq!(selected_name(&app), "Projects");
+        app.handle(key(KeyCode::Down));
+        assert_eq!(selected_name(&app), "b.pdf");
+        app.handle(key(KeyCode::Left));
+        assert_eq!(selected_name(&app), "a.txt");
+        assert_eq!(app.cwd, PathBuf::from("/data")); // left did not go up a folder
+    }
+
+    #[test]
+    fn grid_view_requests_each_icon_kind_once() {
+        let (mut app, rx) = app();
+        app.handle(key(KeyCode::Char('+')));
+        app.handle(key(KeyCode::Char('+')));
+        // Other worker events (the initial listing of /data) may arrive first.
+        while app.icons.is_empty() {
+            let ev = rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("icons");
+            app.handle(ev);
+        }
+        // Music (special), Projects (folder), a.txt, b.pdf, c.rs: 5 different icons.
+        assert_eq!(app.icons.len(), 5);
+        app.request_icons(); // nothing new to ask for
+        while let Ok(ev) = rx.recv_timeout(std::time::Duration::from_millis(300)) {
+            assert!(
+                !matches!(ev, AppEvent::Icons(_)),
+                "icons were requested twice"
+            );
+        }
     }
 
     #[test]

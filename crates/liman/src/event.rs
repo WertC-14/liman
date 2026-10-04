@@ -10,6 +10,7 @@ use std::thread;
 use std::time::Duration;
 
 use liman_core::Entry;
+use liman_core::icons::IconPixels;
 use liman_core::job::Outcome;
 use ratatui::crossterm::event::{self, Event};
 
@@ -27,6 +28,8 @@ pub enum AppEvent {
         done: u64,
     },
     JobFinished(Outcome),
+    /// Icons rendered by the icon worker, by `icon_key`.
+    Icons(Vec<(String, IconPixels)>),
 }
 
 /// How long the input thread waits for input before checking the pause flag again.

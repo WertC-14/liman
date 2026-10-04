@@ -3,14 +3,14 @@
 
 use liman_core::format;
 use liman_widgets::theme::{BAR_BG, BG, DIM, FG};
-use liman_widgets::{FileList, ListMode, Sidebar, breadcrumb, file_list, sidebar};
+use liman_widgets::{FileList, GridView, ListMode, Sidebar, breadcrumb, file_list, grid, sidebar};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::{App, ClipMode, Listing};
+use crate::app::{App, ClipMode, Listing, View};
 
 /// Below this width the sidebar is hidden so the list keeps enough room.
 const SIDEBAR_MIN_WIDTH: u16 = 70;
@@ -61,11 +61,18 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
             // Borrow the fields directly (not through a method on `app`) so that `app.table`
             // can be borrowed mutably while `entries` is borrowed immutably.
             let rows: Vec<_> = app.visible.iter().map(|&i| &entries[i]).collect();
-            frame.render_stateful_widget(
-                FileList::new(&rows, format::now(), app.drawn_view).marked(&app.marked),
-                area,
-                &mut app.table,
-            );
+            match app.drawn_view.list_mode() {
+                Some(mode) => frame.render_stateful_widget(
+                    FileList::new(&rows, format::now(), mode).marked(&app.marked),
+                    area,
+                    &mut app.table,
+                ),
+                None => frame.render_stateful_widget(
+                    GridView::new(&rows, &app.icons).marked(&app.marked),
+                    area,
+                    &mut app.table,
+                ),
+            }
             return;
         }
     };
@@ -78,13 +85,16 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(message).centered().fg(DIM), middle);
 }
 
-/// Boxes need room for at least two entries; otherwise fall back to the detailed view.
-fn fitting_view(wanted: ListMode, area: Rect) -> ListMode {
-    let min_height = file_list::HEADER_HEIGHT + 2 * ListMode::Normal.row_height();
-    if wanted == ListMode::Normal && (area.height < min_height || area.width < 50) {
-        ListMode::Detailed
-    } else {
-        wanted
+/// Falls back to a smaller view when the wanted one does not fit: the grid needs one whole tile,
+/// boxes need room for two entries.
+fn fitting_view(wanted: View, area: Rect) -> View {
+    let grid_fits = area.width >= grid::TILE_WIDTH && area.height >= grid::TILE_HEIGHT;
+    let boxes_fit = area.height >= file_list::HEADER_HEIGHT + 2 * ListMode::Normal.row_height()
+        && area.width >= 50;
+    match wanted {
+        View::Grid if grid_fits => View::Grid,
+        View::Grid | View::Normal if boxes_fit => View::Normal,
+        _ => View::Detailed,
     }
 }
 
@@ -220,16 +230,28 @@ mod tests {
     #[test]
     fn normal_view_falls_back_to_detailed_when_too_small() {
         assert_eq!(
-            fitting_view(ListMode::Normal, Rect::new(0, 0, 80, 30)),
-            ListMode::Normal
+            fitting_view(View::Normal, Rect::new(0, 0, 80, 30)),
+            View::Normal
         );
         assert_eq!(
-            fitting_view(ListMode::Normal, Rect::new(0, 0, 80, 10)),
-            ListMode::Detailed
+            fitting_view(View::Normal, Rect::new(0, 0, 80, 10)),
+            View::Detailed
         );
         assert_eq!(
-            fitting_view(ListMode::Normal, Rect::new(0, 0, 40, 30)),
-            ListMode::Detailed
+            fitting_view(View::Normal, Rect::new(0, 0, 40, 30)),
+            View::Detailed
+        );
+        assert_eq!(
+            fitting_view(View::Grid, Rect::new(0, 0, 80, 30)),
+            View::Grid
+        );
+        assert_eq!(
+            fitting_view(View::Grid, Rect::new(0, 0, 80, 9)),
+            View::Detailed
+        );
+        assert_eq!(
+            fitting_view(View::Grid, Rect::new(0, 0, 15, 30)),
+            View::Detailed
         );
     }
 
