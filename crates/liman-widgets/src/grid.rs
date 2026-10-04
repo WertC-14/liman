@@ -1,5 +1,5 @@
 //! Grid view (ADR 0003, 0006): one hollow, type-colored box per entry, name below.
-//! Zooming changes the box size; the largest size that still shows 4+ tiles per row is the default.
+//! Zooming changes the box size; medium boxes are the default.
 //!
 //! Uses a `TableState` as state (selected index; offset = first visible tile row) so the app keeps
 //! one selection across all three views.
@@ -29,17 +29,8 @@ pub const fn tile_size(level: usize) -> (u16, u16) {
 /// Smallest tile, for "does the grid fit at all".
 pub const MIN_TILE: (u16, u16) = tile_size(0);
 
-/// The largest level that still shows a useful amount of files: 4+ tiles per row and 2+ rows
-/// (or the smallest level if even that does not fit).
-pub fn best_level(area: Rect) -> usize {
-    (0..BOX_SIZES.len())
-        .rev()
-        .find(|&level| {
-            let (w, h) = tile_size(level);
-            area.width / w >= 4 && area.height / h >= 2
-        })
-        .unwrap_or(0)
-}
+/// Level used when the user has not zoomed: medium boxes (16×7), about 7 per row on a wide terminal.
+pub const DEFAULT_LEVEL: usize = 1;
 
 /// The largest level not above `wanted` for which one tile fits in `area`.
 pub fn fitting_level(wanted: usize, area: Rect) -> usize {
@@ -235,8 +226,6 @@ mod tests {
     #[test]
     fn levels_follow_the_space() {
         assert_eq!(tile_size(0), (16, 7));
-        assert_eq!(best_level(Rect::new(0, 0, 159, 36)), 3); // 5 × 30 cells wide
-        assert_eq!(best_level(Rect::new(0, 0, 70, 20)), 0);
         assert_eq!(fitting_level(3, Rect::new(0, 0, 22, 12)), 1);
     }
 

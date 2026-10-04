@@ -68,7 +68,7 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
                     &mut app.table,
                 ),
                 None => {
-                    let wanted = app.grid_level.unwrap_or_else(|| grid::best_level(area));
+                    let wanted = app.grid_level.unwrap_or(grid::DEFAULT_LEVEL);
                     app.drawn_grid_level = grid::fitting_level(wanted, area);
                     frame.render_stateful_widget(
                         GridView::new(&rows, app.drawn_grid_level).marked(&app.marked),
@@ -172,7 +172,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         &[
             ("Enter", "open"),
-            ("⌫", "up"),
+            ("Bksp", "up"),
             ("Space", "mark"),
             ("^C ^X ^V", "copy cut paste"),
             ("Del", "trash"),

@@ -214,7 +214,11 @@ impl App {
             return;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
+            // Folder navigation that works in every view (GUI file manager keys).
+            KeyCode::Up | KeyCode::Left if alt => self.go_up(),
+            KeyCode::Down | KeyCode::Right if alt => self.activate_selected(),
             // GUI shortcuts: Ctrl+C copies, so quitting is q or Ctrl+Q.
             KeyCode::Char('q') => self.running = false,
             KeyCode::Char('c') if ctrl => self.copy_to_clipboard(ClipMode::Copy),
@@ -282,8 +286,8 @@ impl App {
         match mouse.kind {
             MouseEventKind::ScrollUp if ctrl => self.zoom(1),
             MouseEventKind::ScrollDown if ctrl => self.zoom(-1),
-            MouseEventKind::ScrollDown => self.move_selection(WHEEL_STEP),
-            MouseEventKind::ScrollUp => self.move_selection(-WHEEL_STEP),
+            MouseEventKind::ScrollDown => self.move_selection(self.wheel_step()),
+            MouseEventKind::ScrollUp => self.move_selection(-self.wheel_step()),
             MouseEventKind::Down(MouseButton::Left) => self.on_click(mouse.column, mouse.row),
             _ => return, // movement, drag, release: nothing to do yet
         }
@@ -382,6 +386,14 @@ impl App {
     /// Tiles per row in the grid as drawn last frame.
     fn grid_columns(&self) -> usize {
         GridView::columns(self.list_area.width, self.drawn_grid_level)
+    }
+
+    /// One wheel notch: three lines in the lists, one tile row in the grid.
+    fn wheel_step(&self) -> isize {
+        match self.drawn_view {
+            View::Grid => self.vertical_step(),
+            _ => WHEEL_STEP,
+        }
     }
 
     /// Rows move by one entry in the lists, by a whole tile row in the grid.
@@ -763,6 +775,26 @@ mod tests {
         // list_area.y = 2, rows start at 4; entry 1 (Projects) spans rows 9..=12
         app.handle(click(30, 10));
         assert_eq!(selected_name(&app), "Projects");
+    }
+
+    #[test]
+    fn alt_arrows_enter_and_leave_folders_in_every_view() {
+        let (mut app, _rx) = app();
+        app.drawn_view = View::Grid;
+        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Down,
+            KeyModifiers::ALT,
+        ))));
+        assert!(matches!(app.listing, Listing::Loading)); // entered Music
+
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(PathBuf::from("/data/Projects"), places(), tx);
+        app.drawn_view = View::Grid;
+        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Up,
+            KeyModifiers::ALT,
+        ))));
+        assert_eq!(app.generation, 2); // asked for /data
     }
 
     #[test]
