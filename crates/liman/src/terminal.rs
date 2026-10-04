@@ -27,6 +27,8 @@ const MAX_PROMPT_LINES: u16 = 2;
 const SCROLLBACK: usize = 1000;
 
 pub struct Terminal {
+    /// Which shell this is (terminal events carry it).
+    pub id: u64,
     parser: vt100::Parser,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -76,6 +78,9 @@ pub struct CommandOutput {
 /// Command output kept for results (enough for thousands of paths).
 const MAX_CAPTURE: usize = 4 * 1024 * 1024;
 
+/// Each shell gets an id, so output of a shell in a background tab reaches the right tab.
+static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 impl Terminal {
     /// Starts the user's shell (`$SHELL`, else `/bin/sh`) in `cwd` with a `rows`×`cols` screen.
     pub fn spawn(
@@ -99,6 +104,7 @@ impl Terminal {
         tx: Sender<AppEvent>,
     ) -> anyhow_lite::Result<Self> {
         let (rows, cols) = (rows.max(2), cols.max(10));
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let pair = native_pty_system()
             .openpty(pty_size(rows, cols))
             .map_err(anyhow_lite::from)?;
@@ -121,7 +127,10 @@ impl Terminal {
                     Ok(n) => {
                         let _ = ping.send(());
                         if reader_tx
-                            .send(AppEvent::TermOutput(buf[..n].to_vec()))
+                            .send(AppEvent::TermOutput {
+                                id,
+                                bytes: buf[..n].to_vec(),
+                            })
                             .is_err()
                         {
                             return;
@@ -129,7 +138,7 @@ impl Terminal {
                     }
                 }
             }
-            let _ = reader_tx.send(AppEvent::TermExited);
+            let _ = reader_tx.send(AppEvent::TermExited(id));
         });
         // Quiet watcher: each burst of output followed by QUIET silence is reported once.
         // Used to clear the start-up greeting and to notice that a command has finished.
@@ -144,13 +153,14 @@ impl Terminal {
                         Err(RecvTimeoutError::Disconnected) => return,
                     }
                 }
-                if tx.send(AppEvent::TermQuiet).is_err() {
+                if tx.send(AppEvent::TermQuiet(id)).is_err() {
                     return;
                 }
             }
         });
 
         Ok(Self {
+            id,
             parser: vt100::Parser::new(rows, cols, SCROLLBACK),
             master: pair.master,
             writer,
@@ -592,7 +602,9 @@ mod tests {
     ) -> bool {
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(5) {
-            if let Ok(AppEvent::TermOutput(bytes)) = rx.recv_timeout(Duration::from_millis(50)) {
+            if let Ok(AppEvent::TermOutput { bytes, .. }) =
+                rx.recv_timeout(Duration::from_millis(50))
+            {
                 term.process(&bytes);
             }
             if done(term) {

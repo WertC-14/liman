@@ -4,12 +4,14 @@ mod actions;
 mod file_ops;
 mod git_ops;
 mod preview;
+mod tabs;
 mod terminal_mode;
 
 pub use actions::{Action, Menu};
 pub use file_ops::{ClipMode, Clipboard, Dialog, JobStatus, RenameInput};
 pub use git_ops::GitPanel;
 pub use preview::{PreviewKey, PreviewPane};
+pub use tabs::{TabLabel, Tabs};
 pub use terminal_mode::{Focus, TermMode};
 
 use liman_core::i18n::{tr, trf};
@@ -185,6 +187,8 @@ pub struct App {
     watch: crate::watch::FolderWatch,
     /// F3: preview of the selected item.
     pub preview: PreviewPane,
+    /// Ctrl+T: the tab row (ADR 0008); the active tab's state is in the fields above.
+    pub tabs: Tabs,
     /// Command palette (Ctrl+P) or right-click menu.
     pub menu: Option<Menu>,
     /// Where the menu was drawn (for clicks). Written by the UI.
@@ -273,6 +277,7 @@ impl App {
             branch_picker: None,
             git_again: false,
             preview: PreviewPane::default(),
+            tabs: Tabs::default(),
             menu: None,
             menu_area: Rect::default(),
             rename_after_load: false,
@@ -383,8 +388,19 @@ impl App {
             } => self.on_listing(generation, path, result),
             AppEvent::JobProgress { done } => self.on_job_progress(done),
             AppEvent::JobFinished(outcome) => self.on_job_finished(outcome),
-            AppEvent::TermOutput(bytes) => self.on_term_output(&bytes),
-            AppEvent::TermExited => self.on_term_exited(),
+            AppEvent::TermOutput { id, bytes } if self.is_active_terminal(id) => {
+                self.on_term_output(&bytes)
+            }
+            AppEvent::TermOutput { id, bytes } => {
+                self.on_background_terminal(id, tabs::BackgroundTerm::Output(bytes))
+            }
+            AppEvent::TermExited(id) if self.is_active_terminal(id) => self.on_term_exited(),
+            AppEvent::TermExited(id) => {
+                self.on_background_terminal(id, tabs::BackgroundTerm::Exited)
+            }
+            AppEvent::TermQuiet(id) if !self.is_active_terminal(id) => {
+                self.on_background_terminal(id, tabs::BackgroundTerm::Quiet)
+            }
             AppEvent::FolderChanged(dir) => {
                 if dir == self.cwd && self.results.is_none() && self.loading_path.is_none() {
                     self.refresh();
@@ -403,7 +419,7 @@ impl App {
             AppEvent::Counts { generation, counts } => self.on_counts(generation, counts),
             AppEvent::GitDone { label, result } => self.on_git_done(label, result),
             AppEvent::Preview { key, preview } => self.on_preview(key, *preview),
-            AppEvent::TermQuiet => {
+            AppEvent::TermQuiet(_) => {
                 let Some(term) = &mut self.terminal else {
                     return;
                 };
@@ -415,6 +431,10 @@ impl App {
                 }
             }
         }
+    }
+
+    fn is_active_terminal(&self, id: u64) -> bool {
+        self.terminal.as_ref().is_some_and(|t| t.id == id)
     }
 
     /// Entries currently shown, in display order.
@@ -451,6 +471,8 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::F(4) => return self.toggle_panel(),
+            KeyCode::PageUp if ctrl => return self.cycle_tab(-1),
+            KeyCode::PageDown if ctrl => return self.cycle_tab(1),
             KeyCode::F(3) => return self.toggle_preview(),
             KeyCode::Char('o') if ctrl => return self.toggle_fullscreen(),
             KeyCode::F(6) if self.term_mode == TermMode::Panel => return self.switch_focus(),
@@ -515,6 +537,9 @@ impl App {
         match key.code {
             // Folder navigation that works in every view (GUI file manager keys).
             // Like Nautilus / a browser: Alt+← back, Alt+→ forward, Alt+↑ parent, Alt+↓ open.
+            KeyCode::Char('t') if ctrl => self.new_tab(),
+            KeyCode::Char('w') if ctrl => self.close_tab(),
+            KeyCode::Char(c @ '1'..='9') if alt => self.switch_tab(c as usize - '1' as usize),
             KeyCode::Left if alt => self.go_back(),
             KeyCode::Right if alt => self.go_forward(),
             KeyCode::Up if alt => self.go_up(),
@@ -627,6 +652,8 @@ impl App {
             }
             MouseEventKind::ScrollDown => self.move_selection(self.wheel_step()),
             MouseEventKind::ScrollUp => self.move_selection(-self.wheel_step()),
+            MouseEventKind::Down(button) if self.tab_row_click(mouse.column, mouse.row, button) => {
+            }
             MouseEventKind::Down(MouseButton::Left)
                 if self.term_mode == TermMode::Panel && mouse.row == self.term_area.y =>
             {

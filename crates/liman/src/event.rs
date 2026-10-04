@@ -33,7 +33,10 @@ pub enum AppEvent {
     },
     JobFinished(Outcome),
     /// Bytes the embedded shell wrote.
-    TermOutput(Vec<u8>),
+    TermOutput {
+        id: u64,
+        bytes: Vec<u8>,
+    },
     /// A preview finished building (F3 panel).
     Preview {
         key: crate::app::PreviewKey,
@@ -52,9 +55,9 @@ pub enum AppEvent {
     /// Something changed in this folder (after a short quiet period).
     FolderChanged(PathBuf),
     /// The embedded shell exited.
-    TermExited,
+    TermExited(u64),
     /// The embedded shell finished its start-up output (time to clear the greeting).
-    TermQuiet,
+    TermQuiet(u64),
 }
 
 /// Input poll timeout right after the user did something: a pause request is noticed quickly.

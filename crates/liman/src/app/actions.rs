@@ -37,6 +37,9 @@ pub enum Action {
     Up,
     Home,
     Recent,
+    NewTab,
+    CloseTab,
+    NextTab,
     Preview,
     TerminalPanel,
     TerminalFullScreen,
@@ -54,7 +57,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 41] = [
+    pub const ALL: [Action; 44] = [
         Self::GitPanel,
         Self::GitStage,
         Self::GitUnstage,
@@ -90,6 +93,9 @@ impl Action {
         Self::Up,
         Self::Home,
         Self::Recent,
+        Self::NewTab,
+        Self::CloseTab,
+        Self::NextTab,
         Self::Preview,
         Self::TerminalPanel,
         Self::TerminalFullScreen,
@@ -160,6 +166,9 @@ impl Action {
             Self::Up => "Parent folder",
             Self::Home => "Home",
             Self::Recent => "Recent files",
+            Self::NewTab => "New tab",
+            Self::CloseTab => "Close tab",
+            Self::NextTab => "Next tab",
             Self::Preview => "Preview panel",
             Self::TerminalPanel => "Terminal panel",
             Self::TerminalFullScreen => "Terminal full screen",
@@ -206,6 +215,9 @@ impl Action {
             Self::Up => "Bksp",
             Self::Home => "~",
             Self::Recent => "",
+            Self::NewTab => "Ctrl+T",
+            Self::CloseTab => "Ctrl+W",
+            Self::NextTab => "Ctrl+PgDn",
             Self::Preview => "F3",
             Self::TerminalPanel => "F4",
             Self::TerminalFullScreen => "Ctrl+O",
@@ -285,6 +297,9 @@ impl App {
             Action::Up => self.go_up(),
             Action::Home => self.load(self.places.home.clone()),
             Action::Recent => self.show_recent(),
+            Action::NewTab => self.new_tab(),
+            Action::CloseTab => self.close_tab(),
+            Action::NextTab => self.cycle_tab(1),
             Action::Preview => self.toggle_preview(),
             Action::TerminalPanel => self.toggle_panel(),
             Action::TerminalFullScreen => self.toggle_fullscreen(),

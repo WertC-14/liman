@@ -391,6 +391,8 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
     ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
     ("Shift+Del", "delete for good (asks first)"),
+    ("Ctrl+T / Ctrl+W", "new tab / close tab"),
+    ("Alt+1…9 / Ctrl+PgUp/PgDn", "go to tab"),
     ("F3", "preview panel"),
     ("F4 / Ctrl+O", "terminal panel / full screen"),
     ("Alt+Enter", "selected paths into the terminal"),
@@ -428,17 +430,28 @@ fn render_help(frame: &mut Frame) {
 }
 
 fn render_screen(frame: &mut Frame, app: &mut App) {
+    frame.render_widget(
+        Block::new().style(Style::new().bg(theme::bg())),
+        frame.area(),
+    );
+    // Tab row (ADR 0008, sketch B): only with two or more tabs.
+    let labels = app.tab_labels();
+    let screen = if labels.is_empty() {
+        app.tabs.chip_areas.clear();
+        app.tabs.plus_area = Rect::default();
+        frame.area()
+    } else {
+        let [row, rest] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(frame.area());
+        render_tab_row(frame, app, &labels, row);
+        rest
+    };
     let [top, body, status] = Layout::vertical([
         Constraint::Length(3), // framed title bar with the path chips
         Constraint::Min(0),
         Constraint::Length(1),
     ])
-    .areas(frame.area());
-
-    frame.render_widget(
-        Block::new().style(Style::new().bg(theme::bg())),
-        frame.area(),
-    );
+    .areas(screen);
 
     if app.term_mode == TermMode::Fullscreen {
         render_terminal(frame, app, top.union(body));
@@ -524,6 +537,36 @@ fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
             liman_widgets::preview::PreviewView::new(preview).scroll(app.preview.scroll),
             inner,
         );
+    }
+}
+
+/// `  1 ⌂ Ev    2 liman ●    3 Downloads    +` — the active tab is a filled chip.
+fn render_tab_row(frame: &mut Frame, app: &mut App, labels: &[crate::app::TabLabel], area: Rect) {
+    let accent = theme::accent();
+    let mut x = area.x + 1;
+    app.tabs.chip_areas.clear();
+    for (i, label) in labels.iter().enumerate() {
+        let shell = if label.has_shell { " ●" } else { "" };
+        let text = format!(" {} {}{shell} ", i + 1, label.title);
+        let width = (text.chars().count() as u16).min(area.right().saturating_sub(x));
+        if width == 0 {
+            break;
+        }
+        let rect = Rect::new(x, area.y, width, 1);
+        let style = if label.active {
+            Style::new().bg(accent).fg(theme::text_on(accent)).bold()
+        } else {
+            Style::new().fg(theme::dim())
+        };
+        frame.render_widget(Paragraph::new(text).style(style), rect);
+        app.tabs.chip_areas.push(rect);
+        x += width + 2;
+    }
+    app.tabs.plus_area = Rect::default();
+    if x + 3 <= area.right() {
+        let rect = Rect::new(x, area.y, 3, 1);
+        frame.render_widget(Paragraph::new(" + ").fg(theme::dim()), rect);
+        app.tabs.plus_area = rect;
     }
 }
 

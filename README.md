@@ -10,6 +10,7 @@ Made for people who like GUI file managers but spend their day in SSH and tmux.
 - Built-in terminal (F4) that follows the open folder; files a command prints (`find`, `fd`, `rg -l`...) show up above
 - Git: status letters next to names, branch in the path bar, Ctrl+G panel with diff, stage, commit, push, pull
 - Preview panel (F3): text, folders, images (half blocks), PDF and archive listings
+- Tabs (Ctrl+T), each with its own folder and shell
 - Command palette (Ctrl+P), 8 themes, English and Turkish, 256-color fallback for terminals without truecolor
 
 ## Install
