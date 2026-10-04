@@ -62,6 +62,15 @@ impl App {
         }
     }
 
+    /// Tab: put the keyboard in the terminal, opening the panel if needed.
+    pub(super) fn focus_terminal(&mut self) {
+        if self.term_mode == TermMode::Hidden {
+            self.toggle_panel();
+        } else {
+            self.focus = Focus::Terminal;
+        }
+    }
+
     /// F6: move focus between the files and the panel.
     pub(super) fn switch_focus(&mut self) {
         if self.term_mode == TermMode::Panel {

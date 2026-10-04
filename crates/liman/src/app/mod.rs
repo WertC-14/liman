@@ -116,6 +116,11 @@ pub struct App {
     pub focus: Focus,
     /// Where the terminal was drawn last frame. Written by the UI.
     pub term_area: Rect,
+    /// Panel height chosen with Ctrl+↑/↓ or by dragging its top border; `None` = 40% of the window.
+    pub term_height: Option<u16>,
+    dragging_panel: bool,
+    /// The large view `v` returns to from the compact list.
+    last_large_view: View,
     /// The shell's folder as last seen, so each `cd` in the shell is followed once.
     last_shell_cwd: Option<PathBuf>,
     /// Folder of the listing on its way, if any.
@@ -156,6 +161,9 @@ impl App {
             term_before_fullscreen: TermMode::Hidden,
             focus: Focus::Files,
             term_area: Rect::default(),
+            term_height: None,
+            dragging_panel: false,
+            last_large_view: View::Grid,
             last_shell_cwd: None,
             loading_path: None,
             load_from_shell: false,
@@ -243,6 +251,19 @@ impl App {
             KeyCode::F(4) => return self.toggle_panel(),
             KeyCode::Char('o') if ctrl => return self.toggle_fullscreen(),
             KeyCode::F(6) if self.term_mode == TermMode::Panel => return self.switch_focus(),
+            KeyCode::Up if ctrl && self.term_mode == TermMode::Panel => {
+                return self.resize_panel(2);
+            }
+            KeyCode::Down if ctrl && self.term_mode == TermMode::Panel => {
+                return self.resize_panel(-2);
+            }
+            // Tab: files -> terminal. In the terminal Tab stays the shell's completion key,
+            // Shift+Tab goes back to the files.
+            KeyCode::Tab if !self.terminal_has_focus() => return self.focus_terminal(),
+            KeyCode::BackTab if self.term_mode == TermMode::Panel => {
+                self.focus = Focus::Files;
+                return;
+            }
             _ => {}
         }
         if self.terminal_has_focus() {
@@ -291,6 +312,7 @@ impl App {
             KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => self.go_up(),
             KeyCode::Char('/') => self.filter_editing = true,
             KeyCode::Char('~') => self.load(self.places.home.clone()),
+            KeyCode::Char('v') => self.toggle_compact(),
             // Ctrl variants arrive only in terminals that report them; plain keys always work.
             KeyCode::Char('+' | '=') => self.zoom(1),
             KeyCode::Char('-') => self.zoom(-1),
@@ -331,6 +353,17 @@ impl App {
             MouseEventKind::ScrollDown if ctrl => self.zoom(-1),
             MouseEventKind::ScrollDown => self.move_selection(self.wheel_step()),
             MouseEventKind::ScrollUp => self.move_selection(-self.wheel_step()),
+            MouseEventKind::Down(MouseButton::Left)
+                if self.term_mode == TermMode::Panel && mouse.row == self.term_area.y =>
+            {
+                self.dragging_panel = true; // grabbed the panel's top border
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.dragging_panel => {
+                self.term_height = Some(self.term_area.bottom().saturating_sub(mouse.row));
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.dragging_panel => {
+                self.dragging_panel = false
+            }
             MouseEventKind::Down(MouseButton::Left) => self.on_click(mouse.column, mouse.row),
             _ => return, // movement, drag, release: nothing to do yet
         }
@@ -417,6 +450,22 @@ impl App {
             }
         };
         isize::try_from(entries).unwrap_or(1).max(1)
+    }
+
+    /// `v`: one key between the compact list (like cardea) and the large view last used.
+    fn toggle_compact(&mut self) {
+        if self.view == View::Detailed {
+            self.view = self.last_large_view;
+        } else {
+            self.last_large_view = self.view;
+            self.view = View::Detailed;
+        }
+    }
+
+    /// Ctrl+↑ / Ctrl+↓: grow or shrink the terminal panel by `rows`.
+    fn resize_panel(&mut self, rows: i16) {
+        let current = self.term_height.unwrap_or(self.term_area.height);
+        self.term_height = Some(current.saturating_add_signed(rows).max(4));
     }
 
     /// Zooms like a GUI file manager: Detailed → Normal → Grid, then larger and larger boxes.
@@ -857,6 +906,35 @@ mod tests {
             KeyModifiers::ALT,
         ))));
         assert_eq!(app.generation, 2); // asked for /data
+    }
+
+    #[test]
+    fn v_switches_between_compact_list_and_large_view() {
+        let (mut app, _rx) = app();
+        assert_eq!(app.view, View::Grid);
+        app.handle(key(KeyCode::Char('v')));
+        assert_eq!(app.view, View::Detailed);
+        app.handle(key(KeyCode::Char('v')));
+        assert_eq!(app.view, View::Grid);
+    }
+
+    #[test]
+    fn ctrl_arrows_resize_the_panel_within_limits() {
+        let (mut app, _rx) = app();
+        app.term_mode = TermMode::Panel;
+        app.term_area = Rect::new(0, 20, 80, 10);
+        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Up,
+            KeyModifiers::CONTROL,
+        ))));
+        assert_eq!(app.term_height, Some(12));
+        for _ in 0..10 {
+            app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+                KeyCode::Down,
+                KeyModifiers::CONTROL,
+            ))));
+        }
+        assert_eq!(app.term_height, Some(4));
     }
 
     #[test]

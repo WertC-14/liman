@@ -35,9 +35,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // F4 panel: full width under the files, like Dolphin.
     let body = if app.term_mode == TermMode::Panel {
-        let height = (body.height * 2 / 5)
-            .max(8)
-            .min(body.height.saturating_sub(6));
+        let height = app
+            .term_height
+            .unwrap_or(body.height * 2 / 5)
+            .max(4)
+            .min(body.height.saturating_sub(4));
         let [files, term] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(height)]).areas(body);
         render_terminal(frame, app, term);
@@ -121,8 +123,10 @@ fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let hint = match app.term_mode {
         TermMode::Fullscreen => " Terminal · Ctrl+O back to files ",
-        _ if focused => " Terminal · F6 files · F4 close · Ctrl+O full screen ",
-        _ => " Terminal · F6 or click to type ",
+        _ if focused => {
+            " Terminal · Shift+Tab files · Ctrl+↑↓ size · F4 close · Ctrl+O full screen "
+        }
+        _ => " Terminal · Tab or click to type ",
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -292,8 +296,9 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("Del", "trash"),
             ("F2", "rename"),
             ("^Z", "undo"),
-            ("+/-", "view"),
-            ("F4", "terminal"),
+            ("v", "small/large"),
+            ("+/-", "zoom"),
+            ("Tab", "terminal"),
             ("/", "filter"),
             ("q", "quit"),
         ]
