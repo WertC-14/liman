@@ -41,3 +41,15 @@ pub fn spawn_job(tx: Sender<AppEvent>, job: Job, trash_dir: PathBuf) {
         let _ = tx.send(AppEvent::JobFinished(outcome));
     });
 }
+
+/// Builds entries for paths a shell command printed (metadata reads can be slow for thousands).
+pub fn spawn_results(tx: Sender<AppEvent>, generation: u64, base: PathBuf, paths: Vec<PathBuf>) {
+    thread::spawn(move || {
+        let entries = liman_core::results::entries_for(&paths, &base);
+        let _ = tx.send(AppEvent::Listing {
+            generation,
+            path: base,
+            result: Ok(entries),
+        });
+    });
+}

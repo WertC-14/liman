@@ -386,6 +386,33 @@ mod tests {
     }
 
     #[test]
+    fn command_output_with_paths_becomes_a_results_view() {
+        let (dir, mut app, rx) = setup("results");
+        app.on_command_finished(crate::terminal::CommandOutput {
+            command: "find . -name '*.txt'".into(),
+            cwd: dir.clone(),
+            bytes: b"\x1b[32m./a.txt\x1b[0m\r\n./b.txt\r\nnot a file\r\n".to_vec(),
+        });
+        pump(&mut app, &rx, loaded);
+        let results = app.results.clone().expect("results view");
+        assert_eq!(results.count, 2);
+        assert_eq!(app.visible_entries()[0].name, "a.txt");
+
+        press(&mut app, KeyCode::Backspace); // back to the folder
+        pump(&mut app, &rx, loaded);
+        assert!(app.results.is_none());
+        assert_eq!(app.entry_count(), Some(3)); // a.txt, b.txt, dest/
+
+        app.on_command_finished(crate::terminal::CommandOutput {
+            command: "echo hi".into(),
+            cwd: dir.clone(),
+            bytes: b"hi\r\n".to_vec(),
+        });
+        assert!(app.results.is_none() && matches!(app.listing, Listing::Ready(_)));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn paste_without_clipboard_explains() {
         let (dir, mut app, _rx) = setup("empty-clip");
         ctrl(&mut app, 'v');

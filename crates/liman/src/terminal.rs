@@ -24,8 +24,6 @@ use crate::event::AppEvent;
 const QUIET: Duration = Duration::from_millis(300);
 /// A prompt may span a few lines; the cursor this close to the top means the screen is clean.
 const MAX_PROMPT_LINES: u16 = 2;
-/// Give up waiting for a quiet moment after this long (a shell that prints forever).
-const STARTUP_LIMIT: Duration = Duration::from_secs(10);
 
 /// Lines kept above the screen (not shown yet, but programs like `less` expect it to exist).
 const SCROLLBACK: usize = 1000;
@@ -38,7 +36,25 @@ pub struct Terminal {
     size: (u16, u16),
     /// Whether the start-up output (greeting, fastfetch, ...) has been cleared away yet.
     greeting_cleared: bool,
+    /// Output of the command line the user is running (from Enter until the prompt is back).
+    capture: Option<Capture>,
 }
+
+struct Capture {
+    command: String,
+    cwd: Option<PathBuf>,
+    bytes: Vec<u8>,
+}
+
+/// A finished command line and what it printed (escape sequences still in).
+pub struct CommandOutput {
+    pub command: String,
+    pub cwd: PathBuf,
+    pub bytes: Vec<u8>,
+}
+
+/// Command output kept for results (enough for thousands of paths).
+const MAX_CAPTURE: usize = 4 * 1024 * 1024;
 
 impl Terminal {
     /// Starts the user's shell (`$SHELL`, else `/bin/sh`) in `cwd` with a `rows`×`cols` screen.
@@ -96,11 +112,11 @@ impl Terminal {
             }
             let _ = reader_tx.send(AppEvent::TermExited);
         });
-        // Start-up watcher: each burst of output followed by QUIET silence is reported once.
-        // (A shell may print a little, run fastfetch silently for a while, then print more.)
+        // Quiet watcher: each burst of output followed by QUIET silence is reported once.
+        // Used to clear the start-up greeting and to notice that a command has finished.
         thread::spawn(move || {
             let mut reported = 0;
-            while started.elapsed() < STARTUP_LIMIT {
+            loop {
                 thread::sleep(Duration::from_millis(50));
                 let last = last_output.load(Ordering::Relaxed);
                 let now = started.elapsed().as_millis() as u64;
@@ -120,6 +136,7 @@ impl Terminal {
             child,
             size: (rows, cols),
             greeting_cleared: false,
+            capture: None,
         })
     }
 
@@ -129,6 +146,11 @@ impl Terminal {
 
     pub fn process(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
+        if let Some(capture) = &mut self.capture
+            && capture.bytes.len() < MAX_CAPTURE
+        {
+            capture.bytes.extend_from_slice(bytes);
+        }
     }
 
     /// The shell went quiet during start-up. The panel is small, so drop the greeting
@@ -136,7 +158,7 @@ impl Terminal {
     /// (bash, zsh, fish). Done once the prompt sits at the top; a Ctrl+L that arrived too early
     /// (while the greeting was still running) is simply sent again at the next quiet moment.
     pub fn on_quiet(&mut self) {
-        if self.greeting_cleared || !self.is_idle() {
+        if self.greeting_cleared || !self.is_idle() || self.capture.is_some() {
             return;
         }
         if self.screen().cursor_position().0 <= MAX_PROMPT_LINES {
@@ -158,9 +180,37 @@ impl Terminal {
     }
 
     pub fn send_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Enter && self.is_idle() {
+            // A command line is about to run: remember it and collect what it prints.
+            self.capture = Some(Capture {
+                command: self.cursor_line(),
+                cwd: self.cwd(),
+                bytes: Vec::new(),
+            });
+        }
         if let Some(bytes) = key_bytes(key, self.screen().application_cursor()) {
             self.send(&bytes);
         }
+    }
+
+    /// The text of the line the cursor is on, without the prompt (see [`strip_prompt`]).
+    fn cursor_line(&self) -> String {
+        let (row, _) = self.screen().cursor_position();
+        let (_, cols) = self.screen().size();
+        strip_prompt(&self.screen().contents_between(row, 0, row, cols))
+    }
+
+    /// The command started with Enter has finished (the shell is back at its prompt and quiet).
+    pub fn take_finished_command(&mut self) -> Option<CommandOutput> {
+        if !self.is_idle() {
+            return None;
+        }
+        let capture = self.capture.take()?;
+        Some(CommandOutput {
+            command: capture.command,
+            cwd: capture.cwd.or_else(|| self.cwd())?,
+            bytes: capture.bytes,
+        })
     }
 
     pub fn send(&mut self, bytes: &[u8]) {
@@ -196,6 +246,15 @@ impl Drop for Terminal {
     fn drop(&mut self) {
         let _ = self.child.kill();
     }
+}
+
+/// A command line without its prompt: everything after the last prompt symbol (`❯ $ # > %`).
+pub fn strip_prompt(line: &str) -> String {
+    let line = line.trim();
+    let after = line.rfind(['❯', '$', '#', '>', '%']).map_or(line, |i| {
+        &line[i + line[i..].chars().next().map_or(1, char::len_utf8)..]
+    });
+    after.trim().to_string()
 }
 
 fn pty_size(rows: u16, cols: u16) -> PtySize {
@@ -277,6 +336,14 @@ mod tests {
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn prompts_are_stripped_from_command_lines() {
+        assert_eq!(strip_prompt("❯ find . -name x"), "find . -name x");
+        assert_eq!(strip_prompt("user@host:~$ ls -1"), "ls -1");
+        assert_eq!(strip_prompt("❯"), "");
+        assert_eq!(strip_prompt("  fd rs  "), "fd rs");
     }
 
     #[test]

@@ -59,6 +59,13 @@ impl View {
     }
 }
 
+/// A listing of files found by a shell command (`find`, `fd`, `grep -l`, ...).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Results {
+    pub command: String,
+    pub count: usize,
+}
+
 /// What the body of the window shows.
 pub enum Listing {
     Loading,
@@ -121,6 +128,10 @@ pub struct App {
     dragging_panel: bool,
     /// The large view `v` returns to from the compact list.
     last_large_view: View,
+    /// Set while the view shows files found by a shell command instead of a folder.
+    pub results: Option<Results>,
+    /// Results on their way from the worker (becomes `results` when the listing arrives).
+    results_pending: Option<Results>,
     /// The shell's folder as last seen, so each `cd` in the shell is followed once.
     last_shell_cwd: Option<PathBuf>,
     /// Folder of the listing on its way, if any.
@@ -164,6 +175,8 @@ impl App {
             term_height: None,
             dragging_panel: false,
             last_large_view: View::Grid,
+            results: None,
+            results_pending: None,
             last_shell_cwd: None,
             loading_path: None,
             load_from_shell: false,
@@ -190,6 +203,20 @@ impl App {
 
     /// Requests a listing of `path`. The view switches when the result arrives.
     pub fn load(&mut self, path: PathBuf) {
+        self.results_pending = None;
+        self.start_loading(&path);
+        worker::spawn_listing(self.tx.clone(), self.generation, path, self.options);
+    }
+
+    /// Shows the files a shell command printed, like a folder listing (Backspace returns to the folder).
+    fn load_results(&mut self, results: Results, base: PathBuf, paths: Vec<PathBuf>) {
+        self.results_pending = Some(results);
+        self.load_from_shell = true; // the shell is already in `base`
+        self.start_loading(&base);
+        worker::spawn_results(self.tx.clone(), self.generation, base, paths);
+    }
+
+    fn start_loading(&mut self, path: &std::path::Path) {
         self.generation += 1;
         self.listing = Listing::Loading;
         self.visible.clear();
@@ -197,8 +224,7 @@ impl App {
         self.filter.clear();
         self.filter_editing = false;
         self.dirty = true;
-        self.loading_path = Some(path.clone());
-        worker::spawn_listing(self.tx.clone(), self.generation, path, self.options);
+        self.loading_path = Some(path.to_path_buf());
     }
 
     pub fn handle(&mut self, event: AppEvent) {
@@ -217,8 +243,12 @@ impl App {
             AppEvent::TermOutput(bytes) => self.on_term_output(&bytes),
             AppEvent::TermExited => self.on_term_exited(),
             AppEvent::TermQuiet => {
-                if let Some(term) = &mut self.terminal {
-                    term.on_quiet();
+                let Some(term) = &mut self.terminal else {
+                    return;
+                };
+                term.on_quiet();
+                if let Some(out) = term.take_finished_command() {
+                    self.on_command_finished(out);
                 }
             }
         }
@@ -294,6 +324,7 @@ impl App {
             KeyCode::F(2) => self.begin_rename(),
             KeyCode::Char(' ') => self.toggle_mark(),
             KeyCode::Esc if !self.filter.is_empty() => self.set_filter(String::new()),
+            KeyCode::Esc if self.results.is_some() => self.go_up(),
             KeyCode::Esc => self.marked.clear(),
             // In the grid, left/right move between tiles and up/down jump a row (like Nautilus).
             KeyCode::Right | KeyCode::Char('l') if self.drawn_view == View::Grid => {
@@ -550,7 +581,39 @@ impl App {
         }
     }
 
+    /// A command run in the terminal finished: if it printed paths, show them up here.
+    pub(super) fn on_command_finished(&mut self, out: crate::terminal::CommandOutput) {
+        let text = liman_core::results::strip_ansi(&out.bytes);
+        let paths = liman_core::results::paths_from_output(&text, &out.cwd);
+        if paths.is_empty() {
+            return;
+        }
+        // Typed fast (or pasted), the line may not have been echoed yet when Enter was pressed:
+        // then the command is the first printed line that is not one of the results.
+        let command = if out.command.is_empty() {
+            text.lines()
+                .map(crate::terminal::strip_prompt)
+                .find(|l| {
+                    !l.is_empty()
+                        && !paths
+                            .iter()
+                            .any(|p| p.ends_with(l.trim_start_matches("./")))
+                })
+                .unwrap_or_else(|| "command".into())
+        } else {
+            out.command
+        };
+        let results = Results {
+            command,
+            count: paths.len(),
+        };
+        self.load_results(results, out.cwd, paths);
+    }
+
     fn go_up(&mut self) {
+        if self.results.is_some() {
+            return self.load(self.cwd.clone()); // back from results to the folder
+        }
         let Some(parent) = self.cwd.parent().map(PathBuf::from) else {
             return;
         };
@@ -588,6 +651,7 @@ impl App {
             return; // stale: a newer request is on its way
         }
         self.loading_path = None;
+        self.results = self.results_pending.take();
         let from_shell = std::mem::take(&mut self.load_from_shell);
         if result.is_ok() {
             self.sync_shell_to(&path, from_shell);

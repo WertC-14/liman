@@ -68,6 +68,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     app.path_bar_area = area;
+    if let Some(results) = &app.results {
+        let accent = liman_widgets::theme::type_color(liman_core::FileType::Folder);
+        let line = Line::from(vec![
+            Span::raw(" ⌕ ").fg(accent).bold(),
+            Span::raw(results.command.clone()).fg(FG).bold(),
+            Span::raw(format!(
+                "  ·  {} found in {}",
+                format::items(results.count),
+                app.cwd.display()
+            ))
+            .fg(DIM),
+            Span::raw("   Bksp/Esc back to the folder").fg(DIM),
+        ]);
+        frame.render_widget(Paragraph::new(line).style(Style::new().bg(BAR_BG)), area);
+        return;
+    }
     let line = breadcrumb::line(&app.path_segments());
     frame.render_widget(Paragraph::new(line).style(Style::new().bg(BAR_BG)), area);
 }
