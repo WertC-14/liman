@@ -20,7 +20,26 @@ use liman_core::Places;
 use app::App;
 use tui::Tui;
 
+const HELP: &str = "liman: a terminal file manager with the feel of a GUI file manager
+
+Usage: liman            open the current folder
+       liman --version  print the version
+
+Inside: ? shows all keys, Ctrl+P all commands.
+Config: ~/.config/liman/config (theme, lang = tr | en, colors = truecolor | 256, hidden, sort, preview)";
+
 fn main() -> io::Result<()> {
+    match std::env::args().nth(1).as_deref() {
+        Some("--version" | "-V") => {
+            println!("liman {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("--help" | "-h") => {
+            println!("{HELP}");
+            return Ok(());
+        }
+        _ => {}
+    }
     let mut tui = Tui::new()?;
     let (tx, rx) = mpsc::channel();
     let input_paused = Arc::new(AtomicBool::new(false));
