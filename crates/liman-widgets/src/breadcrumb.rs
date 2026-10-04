@@ -18,7 +18,11 @@ pub struct Segment {
 /// Splits `path` into clickable segments. Paths under `home` start at "Home", others at "/".
 pub fn segments(path: &Path, home: &Path) -> Vec<Segment> {
     let (mut current, first, rest) = match path.strip_prefix(home) {
-        Ok(rest) => (home.to_path_buf(), "⌂ Home".to_string(), rest),
+        Ok(rest) => (
+            home.to_path_buf(),
+            format!("⌂ {}", liman_core::i18n::tr("Home")),
+            rest,
+        ),
         Err(_) => (
             PathBuf::from("/"),
             "/".to_string(),
