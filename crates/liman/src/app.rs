@@ -14,6 +14,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::TableState;
 
 use crate::event::AppEvent;
+use crate::open::{self, OpenPlan};
 use crate::worker;
 
 /// Two clicks on the same row within this time count as a double click.
@@ -44,6 +45,8 @@ pub struct App {
     pub filter_editing: bool,
     /// One-line message for the status bar (cleared on the next key press).
     pub message: Option<String>,
+    /// A terminal program the main loop should run in the foreground (set by Enter on a file over SSH).
+    pub external: Option<(String, PathBuf)>,
     /// View chosen by the user (`+` / `-`, Ctrl+wheel).
     pub view: ListMode,
     /// View actually drawn last frame; smaller than `view` when the terminal is too small. Written by the UI.
@@ -78,6 +81,7 @@ impl App {
             filter: String::new(),
             filter_editing: false,
             message: None,
+            external: None,
             view: ListMode::Detailed,
             drawn_view: ListMode::Detailed,
             list_area: Rect::default(),
@@ -289,7 +293,7 @@ impl App {
         }
     }
 
-    /// Enter / double click: open a folder. Opening files comes with file operations (ROADMAP item 7).
+    /// Enter / double click: open a folder here, a file in its app (or editor over SSH).
     fn activate_selected(&mut self) {
         let Some(entry) = self.selected_entry() else {
             return;
@@ -297,8 +301,18 @@ impl App {
         if entry.is_dir {
             let path = entry.path.clone();
             self.load(path);
-        } else {
-            self.message = Some("Opening files is not implemented yet".into());
+            return;
+        }
+        match open::plan(entry, &open::Env::current()) {
+            OpenPlan::Desktop(path) => {
+                let name = entry.name.clone();
+                self.message = Some(match open::open_desktop(&path) {
+                    Ok(()) => format!("Opening “{name}”…"),
+                    Err(e) => format!("Cannot open “{name}”: {e}"),
+                });
+            }
+            OpenPlan::Editor { program, path } => self.external = Some((program, path)),
+            OpenPlan::Unavailable(why) => self.message = Some(why),
         }
     }
 
@@ -486,12 +500,13 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_a_file_only_shows_a_message() {
+    fn enter_on_a_file_keeps_the_listing() {
         let (mut app, _rx) = app();
         app.handle(key(KeyCode::Char('G')));
-        app.handle(key(KeyCode::Enter));
+        // Do not actually launch anything from a test: only check the folder did not change.
+        let entry = app.selected_entry().unwrap().clone();
+        assert!(!entry.is_dir);
         assert!(matches!(app.listing, Listing::Ready(_)));
-        assert!(app.message.is_some());
     }
 
     #[test]

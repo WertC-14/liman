@@ -3,8 +3,11 @@
 //! operations) from worker threads; both send over the same channel.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
+use std::time::Duration;
 
 use liman_core::Entry;
 use ratatui::crossterm::event::{self, Event};
@@ -20,10 +23,27 @@ pub enum AppEvent {
     },
 }
 
+/// How long the input thread waits for input before checking the pause flag again.
+pub const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 /// Reads terminal input on its own thread so the main loop never blocks on stdin.
-pub fn spawn_input_thread(tx: Sender<AppEvent>) {
+///
+/// While `paused` is set the thread does not touch stdin, so an external program
+/// (e.g. `$EDITOR`) gets every key. Polling with a timeout makes the flag take effect
+/// within [`POLL_INTERVAL`].
+pub fn spawn_input_thread(tx: Sender<AppEvent>, paused: Arc<AtomicBool>) {
     thread::spawn(move || {
-        while let Ok(ev) = event::read() {
+        loop {
+            if paused.load(Ordering::Acquire) {
+                thread::sleep(POLL_INTERVAL);
+                continue;
+            }
+            match event::poll(POLL_INTERVAL) {
+                Ok(false) => continue,
+                Ok(true) => {}
+                Err(_) => break,
+            }
+            let Ok(ev) = event::read() else { break };
             if tx.send(AppEvent::Input(ev)).is_err() {
                 break; // main loop is gone
             }

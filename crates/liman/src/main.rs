@@ -2,12 +2,15 @@
 
 mod app;
 mod event;
+mod open;
 mod tui;
 mod ui;
 mod worker;
 
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use liman_core::Places;
@@ -18,7 +21,8 @@ use tui::Tui;
 fn main() -> io::Result<()> {
     let mut tui = Tui::new()?;
     let (tx, rx) = mpsc::channel();
-    event::spawn_input_thread(tx.clone());
+    let input_paused = Arc::new(AtomicBool::new(false));
+    event::spawn_input_thread(tx.clone(), input_paused.clone());
 
     let cwd = std::env::current_dir()?;
     let home = std::env::var_os("HOME").map_or_else(|| cwd.clone(), PathBuf::from);
@@ -37,6 +41,32 @@ fn main() -> io::Result<()> {
         while let Ok(next) = rx.try_recv() {
             app.handle(next);
         }
+
+        if let Some((program, path)) = app.external.take() {
+            run_external(&mut tui, &input_paused, &program, &path, &mut app)?;
+        }
     }
+    Ok(())
+}
+
+/// Hands the terminal to `program` (e.g. `$EDITOR`) and takes it back afterwards.
+fn run_external(
+    tui: &mut Tui,
+    input_paused: &AtomicBool,
+    program: &str,
+    path: &std::path::Path,
+    app: &mut App,
+) -> io::Result<()> {
+    input_paused.store(true, Ordering::Release);
+    // Let the input thread finish its current poll so it does not steal the editor's first keys.
+    std::thread::sleep(event::POLL_INTERVAL * 2);
+    tui.suspend()?;
+    let result = open::run_editor(program, path);
+    tui.resume()?;
+    input_paused.store(false, Ordering::Release);
+    if let Err(e) = result {
+        app.message = Some(format!("Editor failed: {e}"));
+    }
+    app.dirty = true;
     Ok(())
 }
