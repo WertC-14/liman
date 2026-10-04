@@ -119,6 +119,7 @@ mod tests {
             path: PathBuf::from(name),
             is_dir,
             is_symlink: false,
+            special: None,
             size,
             item_count: items,
             modified: None,

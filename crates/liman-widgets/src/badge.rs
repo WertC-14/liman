@@ -38,6 +38,7 @@ mod tests {
             path: PathBuf::from(name),
             is_dir,
             is_symlink: false,
+            special: None,
             size: 0,
             item_count: None,
             modified: None,

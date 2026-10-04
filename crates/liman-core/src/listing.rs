@@ -47,6 +47,7 @@ fn read_entry(path: std::path::PathBuf, name: String, opts: ListOptions) -> Entr
         path,
         is_dir,
         is_symlink,
+        special: None,
     }
 }
 

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::FileType;
+use crate::{FileType, SpecialDir};
 
 #[derive(Debug, Clone)]
 pub struct Entry {
@@ -17,6 +17,8 @@ pub struct Entry {
     pub item_count: Option<usize>,
     pub modified: Option<SystemTime>,
     pub file_type: FileType,
+    /// Set for well-known folders (Downloads, Music, ...); filled in by the app, not by `list_dir`.
+    pub special: Option<SpecialDir>,
 }
 
 impl Entry {
@@ -47,6 +49,7 @@ mod tests {
             path: PathBuf::from(name),
             is_dir: false,
             is_symlink: false,
+            special: None,
             size: 0,
             item_count: None,
             modified: None,

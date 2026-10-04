@@ -145,6 +145,7 @@ mod tests {
             path: PathBuf::from("main.rs"),
             is_dir: false,
             is_symlink: false,
+            special: None,
             size: 13_800,
             item_count: None,
             modified: None,
