@@ -1,0 +1,15 @@
+[package]
+name = "liman"
+description = "A terminal file manager with the feel of a GUI file manager"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+liman-core.workspace = true
+liman-widgets.workspace = true
+
+[lints]
+workspace = true

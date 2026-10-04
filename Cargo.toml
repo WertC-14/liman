@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/liman-core", "crates/liman-widgets", "crates/liman"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/WertC-14/liman"
+
+[workspace.dependencies]
+liman-core = { path = "crates/liman-core" }
+liman-widgets = { path = "crates/liman-widgets" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
