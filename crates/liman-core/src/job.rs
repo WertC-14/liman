@@ -1,4 +1,4 @@
-//! A user action on files (copy, move, rename, trash) as one unit of work.
+//! A user action on files (copy, move, rename, trash, undo) as one unit of work.
 //!
 //! Running a [`Job`] gives a [`Done`] record of exactly what changed on disk. That record is what
 //! undo (Ctrl+Z) reverses. If a job fails half-way, the record still lists the finished part,
@@ -26,6 +26,8 @@ pub enum Job {
     Trash {
         paths: Vec<PathBuf>,
     },
+    /// Reverses an earlier job.
+    Undo(Done),
 }
 
 /// What a job did. Paths are absolute.
@@ -40,6 +42,8 @@ pub enum Done {
         to: PathBuf,
     },
     Trashed(Vec<TrashedItem>),
+    /// An earlier job was reversed. Not undoable itself (no redo yet).
+    Undone(Box<Done>),
 }
 
 impl Done {
@@ -49,6 +53,7 @@ impl Done {
             Self::Moved(v) => v.is_empty(),
             Self::Renamed { .. } => false,
             Self::Trashed(v) => v.is_empty(),
+            Self::Undone(_) => false,
         }
     }
 
@@ -59,6 +64,17 @@ impl Done {
             Self::Moved(v) => v.first().map(|(_, to)| to.as_path()),
             Self::Renamed { to, .. } => Some(to),
             Self::Trashed(_) => None,
+            Self::Undone(done) => done.restored_focus(),
+        }
+    }
+
+    /// After undoing `self`, the path that is back (old name, original place).
+    fn restored_focus(&self) -> Option<&Path> {
+        match self {
+            Self::Copied(_) | Self::Undone(_) => None,
+            Self::Moved(v) => v.first().map(|(from, _)| from.as_path()),
+            Self::Renamed { from, .. } => Some(from),
+            Self::Trashed(v) => v.first().map(|item| item.original.as_path()),
         }
     }
 
@@ -70,6 +86,7 @@ impl Done {
             Self::Moved(v) => format!("Moved {}", count(v.len())),
             Self::Renamed { from, to } => format!("Renamed “{}” to “{}”", name(from), name(to)),
             Self::Trashed(v) => format!("Moved {} to the trash", count(v.len())),
+            Self::Undone(done) => format!("Undone: {}", done.describe()),
         }
     }
 }
@@ -90,6 +107,7 @@ impl Job {
             }
             Self::Rename { .. } => 1,
             Self::Trash { paths } => paths.len() as u64,
+            Self::Undo(_) => 1,
         }
     }
 
@@ -145,8 +163,43 @@ impl Job {
                 }
                 ok(Done::Trashed(items))
             }
+            Self::Undo(done) => {
+                let error = undo(&done, trash_dir)
+                    .err()
+                    .map(|e| format!("Cannot undo: {e}"));
+                progress(1);
+                Outcome {
+                    done: Done::Undone(Box::new(done)),
+                    error,
+                }
+            }
         }
     }
+}
+
+/// Reverses `done`, newest change first. Copies go to the trash rather than being deleted,
+/// so even undoing a copy loses nothing.
+fn undo(done: &Done, trash_dir: &Path) -> std::io::Result<()> {
+    match done {
+        Done::Copied(paths) => {
+            for path in paths.iter().rev() {
+                trash::trash(path, trash_dir)?;
+            }
+        }
+        Done::Moved(pairs) => {
+            for (from, to) in pairs.iter().rev() {
+                ops::move_path(to, from)?;
+            }
+        }
+        Done::Renamed { from, to } => ops::move_path(to, from)?,
+        Done::Trashed(items) => {
+            for item in items.iter().rev() {
+                trash::restore(item)?;
+            }
+        }
+        Done::Undone(_) => {}
+    }
+    Ok(())
 }
 
 fn ok(done: Done) -> Outcome {
@@ -210,6 +263,79 @@ mod tests {
             panic!("expected a trash record")
         };
         assert_eq!(items.len(), 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Runs `job`, then undoes it, and returns the undo outcome.
+    fn run_and_undo(job: Job, trash_dir: &Path) -> Outcome {
+        let out = job.run(trash_dir, &mut |_| {});
+        assert!(out.error.is_none(), "{:?}", out.error);
+        Job::Undo(out.done).run(trash_dir, &mut |_| {})
+    }
+
+    #[test]
+    fn undo_reverses_every_kind_of_job() {
+        let dir = test_dir("job-undo");
+        let trash_dir = dir.join("Trash");
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        fs::create_dir(dir.join("sub")).unwrap();
+
+        let out = run_and_undo(
+            Job::Rename {
+                path: dir.join("a.txt"),
+                new_name: "b.txt".into(),
+            },
+            &trash_dir,
+        );
+        assert!(out.error.is_none());
+        assert!(dir.join("a.txt").exists() && !dir.join("b.txt").exists());
+        assert_eq!(out.done.focus(), Some(dir.join("a.txt").as_path()));
+        assert_eq!(out.done.describe(), "Undone: Renamed “a.txt” to “b.txt”");
+
+        run_and_undo(
+            Job::Move {
+                sources: vec![dir.join("a.txt")],
+                dest: dir.join("sub"),
+            },
+            &trash_dir,
+        );
+        assert!(dir.join("a.txt").exists() && !dir.join("sub/a.txt").exists());
+
+        run_and_undo(
+            Job::Trash {
+                paths: vec![dir.join("a.txt")],
+            },
+            &trash_dir,
+        );
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "a");
+
+        run_and_undo(
+            Job::Copy {
+                sources: vec![dir.join("a.txt")],
+                dest: dir.join("sub"),
+            },
+            &trash_dir,
+        );
+        assert!(!dir.join("sub/a.txt").exists());
+        assert!(dir.join("a.txt").exists());
+        assert!(trash_dir.join("files/a.txt").exists()); // the copy went to the trash
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn undo_fails_safely_when_the_old_place_is_taken() {
+        let dir = test_dir("job-undo-clash");
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        let out = Job::Rename {
+            path: dir.join("a.txt"),
+            new_name: "b.txt".into(),
+        }
+        .run(&dir.join("Trash"), &mut |_| {});
+        fs::write(dir.join("a.txt"), "new").unwrap(); // someone created a.txt again
+        let undo = Job::Undo(out.done).run(&dir.join("Trash"), &mut |_| {});
+        assert!(undo.error.is_some());
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "new");
+        assert!(dir.join("b.txt").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
