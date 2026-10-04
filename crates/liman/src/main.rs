@@ -32,6 +32,12 @@ fn main() -> io::Result<()> {
     if let Some(theme) = settings.get("theme") {
         liman_widgets::theme::set_by_name(theme);
     }
+    // `lang = tr | en` in the config, otherwise the locale ($LC_ALL, $LC_MESSAGES, $LANG).
+    let lang = settings
+        .get("lang")
+        .and_then(|l| liman_core::i18n::parse(l))
+        .unwrap_or_else(|| liman_core::i18n::from_env(|v| std::env::var(v).ok()));
+    liman_core::i18n::set(lang);
     // `colors = truecolor | 256` in the config overrides the guess.
     let env = |name| std::env::var(name).ok();
     let truecolor = match settings.get("colors").map(String::as_str) {
@@ -84,7 +90,7 @@ fn run_external(
     tui.resume()?;
     input_paused.store(false, Ordering::Release);
     if let Err(e) = result {
-        app.message = Some(format!("Editor failed: {e}"));
+        app.message = Some(liman_core::i18n::trf("Editor failed: {}", &[&e]));
     }
     app.dirty = true;
     Ok(())

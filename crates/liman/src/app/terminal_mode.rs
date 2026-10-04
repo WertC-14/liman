@@ -1,6 +1,7 @@
 //! Terminal mode from the user's side: F4 bottom panel, Ctrl+O full screen, F6 focus,
 //! and keeping the shell's folder and the file view's folder in step.
 
+use liman_core::i18n::{tr, trf};
 use std::path::PathBuf;
 
 use ratatui::crossterm::event::KeyEvent;
@@ -145,7 +146,7 @@ impl App {
                 true
             }
             Err(e) => {
-                self.message = Some(format!("Cannot start a shell: {e}"));
+                self.message = Some(trf("Cannot start a shell: {}", &[&e]));
                 false
             }
         }
@@ -184,7 +185,7 @@ impl App {
         self.terminal = None;
         self.term_mode = TermMode::Hidden;
         self.focus = Focus::Files;
-        self.message = Some("The shell exited; F4 starts a new one".into());
+        self.message = Some(tr("The shell exited; F4 starts a new one").into());
     }
 
     /// After the file view moved to `path` by itself (not following the shell), take the shell along.

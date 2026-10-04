@@ -12,6 +12,7 @@ pub use git_ops::GitPanel;
 pub use preview::{PreviewKey, PreviewPane};
 pub use terminal_mode::{Focus, TermMode};
 
+use liman_core::i18n::{tr, trf};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
@@ -842,7 +843,7 @@ impl App {
             && (column.abs_diff(drag.start.0) + row.abs_diff(drag.start.1)) >= 2
         {
             drag.active = true;
-            self.message = Some("Drop on a folder to move (hold Ctrl to copy)".into());
+            self.message = Some(tr("Drop on a folder to move (hold Ctrl to copy)").into());
         }
     }
 
@@ -880,7 +881,7 @@ impl App {
             {
                 self.drop_onto(sources, dest, copy);
             }
-            _ => self.message = Some("Dropped outside a folder: nothing done".into()),
+            _ => self.message = Some(tr("Dropped outside a folder: nothing done").into()),
         }
     }
 
@@ -974,7 +975,7 @@ impl App {
         self.theme_picker = None;
         let name = liman_widgets::theme::palette().name;
         self.save_setting("theme", name);
-        self.message = Some(format!("Theme: {name}"));
+        self.message = Some(trf("Theme: {}", &[&name]));
     }
 
     /// Opens sidebar place `i`: a folder, or the Recent list.
@@ -993,11 +994,11 @@ impl App {
         let home = self.places.home.clone();
         let paths = liman_core::recent::recent_files(&home);
         if paths.is_empty() {
-            self.message = Some("No recent files".into());
+            self.message = Some(tr("No recent files").into());
             return;
         }
         let results = Results {
-            command: "Recent files".into(),
+            command: tr("Recent files").into(),
             count: paths.len(),
         };
         self.load_results(results, home, paths);
@@ -1019,10 +1020,10 @@ impl App {
         );
         if let Some(i) = self.bookmarks.iter().position(|b| *b == folder) {
             self.bookmarks.remove(i);
-            self.message = Some(format!("Removed bookmark “{name}”"));
+            self.message = Some(trf("Removed bookmark “{}”", &[&name]));
         } else {
             self.bookmarks.push(folder);
-            self.message = Some(format!("Bookmarked “{name}”"));
+            self.message = Some(trf("Bookmarked “{}”", &[&name]));
         }
         self.sidebar = self.places.sidebar_with(&self.bookmarks);
         self.sidebar_selected = self
@@ -1031,7 +1032,7 @@ impl App {
         if !cfg!(test) {
             let file = liman_core::config::bookmarks_path(&self.places.home);
             if let Err(e) = liman_core::config::save_bookmarks(&file, &self.bookmarks) {
-                self.message = Some(format!("Bookmark not saved: {e}"));
+                self.message = Some(trf("Bookmark not saved: {}", &[&e]));
             }
         }
     }
@@ -1065,7 +1066,7 @@ impl App {
         }
         let file = liman_core::config::path(&self.places.home);
         if let Err(e) = liman_core::config::set(&file, key, value) {
-            self.message = Some(format!("Setting not saved: {e}"));
+            self.message = Some(trf("Setting not saved: {}", &[&e]));
         }
     }
 
@@ -1079,11 +1080,11 @@ impl App {
         };
         self.save_setting("hidden", value);
         self.message = Some(
-            if self.options.show_hidden {
+            tr(if self.options.show_hidden {
                 "Showing hidden files"
             } else {
                 "Hiding hidden files"
-            }
+            })
             .into(),
         );
         self.select_after_load = self.selected_entry().map(|e| e.name.clone());
@@ -1107,11 +1108,12 @@ impl App {
             .and_then(|p| self.visible_entries().iter().position(|e| e.path == p))
             .unwrap_or(0);
         self.select_row(row);
-        self.message = Some(format!(
-            "Sorted by {}{}",
-            order.key.name(),
-            if order.descending { ", descending" } else { "" }
-        ));
+        let template = if order.descending {
+            "Sorted by {}, descending"
+        } else {
+            "Sorted by {}"
+        };
+        self.message = Some(trf(template, &[&tr(order.key.name())]));
     }
 
     /// `v`: one key between the compact list (like cardea) and the large view last used.
@@ -1203,8 +1205,8 @@ impl App {
             OpenPlan::Desktop(path) => {
                 let name = entry.name.clone();
                 self.message = Some(match open::open_desktop(&path) {
-                    Ok(()) => format!("Opening “{name}”…"),
-                    Err(e) => format!("Cannot open “{name}”: {e}"),
+                    Ok(()) => trf("Opening “{}”…", &[&name]),
+                    Err(e) => trf("Cannot open “{}”: {}", &[&name, &e]),
                 });
             }
             OpenPlan::Editor { program, path } => self.external = Some((program, path)),
@@ -1259,7 +1261,7 @@ impl App {
                 // Search the folder itself, not inside a previous result list.
                 let base = self.cwd.clone();
                 self.results_pending = Some(Results {
-                    command: format!("search “{needle}”"),
+                    command: trf("search “{}”", &[&needle]),
                     count: 0, // filled in when the listing arrives
                 });
                 self.load_from_shell = true;

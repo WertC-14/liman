@@ -4,6 +4,7 @@
 //! undo (Ctrl+Z) reverses. If a job fails half-way, the record still lists the finished part,
 //! so even a partial job can be undone.
 
+use crate::i18n::trf;
 use std::path::{Path, PathBuf};
 
 use crate::ops;
@@ -115,13 +116,13 @@ impl Done {
     pub fn describe(&self) -> String {
         let count = |n: usize| crate::format::items(n);
         match self {
-            Self::Copied(v) => format!("Copied {}", count(v.len())),
-            Self::Moved(v) => format!("Moved {}", count(v.len())),
-            Self::Renamed { from, to } => format!("Renamed “{}” to “{}”", name(from), name(to)),
-            Self::Trashed(v) => format!("Moved {} to the trash", count(v.len())),
-            Self::Undone(done) => format!("Undone: {}", done.describe()),
-            Self::Deleted(n) => format!("Deleted {} for good", count(*n)),
-            Self::Created(path) => format!("Created “{}”", name(path)),
+            Self::Copied(v) => trf("Copied {}", &[&count(v.len())]),
+            Self::Moved(v) => trf("Moved {}", &[&count(v.len())]),
+            Self::Renamed { from, to } => trf("Renamed “{}” to “{}”", &[&name(from), &name(to)]),
+            Self::Trashed(v) => trf("Moved {} to the trash", &[&count(v.len())]),
+            Self::Undone(done) => trf("Undone: {}", &[&done.describe()]),
+            Self::Deleted(n) => trf("Deleted {} for good", &[&count(*n)]),
+            Self::Created(path) => trf("Created “{}”", &[&name(path)]),
             Self::Batch(parts) => parts
                 .iter()
                 .filter(|d| !d.is_empty())
@@ -193,7 +194,7 @@ impl Job {
                 Err(e) => Outcome {
                     // Nothing changed; an empty Moved record undoes to nothing.
                     done: Done::Moved(Vec::new()),
-                    error: Some(format!("Cannot rename “{}”: {e}", name(&path))),
+                    error: Some(trf("Cannot rename “{}”: {}", &[&name(&path), &e])),
                 },
             },
             Self::Trash { paths } => {
@@ -243,7 +244,7 @@ impl Job {
             Self::Undo(done) => {
                 let error = undo(&done, trash_dir)
                     .err()
-                    .map(|e| format!("Cannot undo: {e}"));
+                    .map(|e| trf("Cannot undo: {}", &[&e]));
                 progress(1);
                 Outcome {
                     done: Done::Undone(Box::new(done)),

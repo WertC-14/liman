@@ -1,6 +1,7 @@
 //! File operations from the user's side: marks, clipboard, rename input, trash, and running jobs.
 //! The work itself happens in `liman_core::job` on a worker thread.
 
+use liman_core::i18n::{tr, trf};
 use std::path::PathBuf;
 
 use liman_core::job::{Job, Outcome};
@@ -101,14 +102,11 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        let verb = match mode {
-            ClipMode::Copy => "copy",
-            ClipMode::Cut => "move",
+        let template = match mode {
+            ClipMode::Copy => "{} ready to copy: open a folder and press Ctrl+V",
+            ClipMode::Cut => "{} ready to move: open a folder and press Ctrl+V",
         };
-        self.message = Some(format!(
-            "{} ready to {verb}: open a folder and press Ctrl+V",
-            liman_core::format::items(paths.len())
-        ));
+        self.message = Some(trf(template, &[&liman_core::format::items(paths.len())]));
         self.clipboard = Some(Clipboard { mode, paths });
         self.marked.clear();
     }
@@ -116,7 +114,7 @@ impl App {
     /// Ctrl+V. If names already exist here, asks first (keep both / replace / skip).
     pub(super) fn paste(&mut self) {
         let Some(clip) = &self.clipboard else {
-            self.message = Some("Nothing to paste: use Ctrl+C or Ctrl+X first".into());
+            self.message = Some(tr("Nothing to paste: use Ctrl+C or Ctrl+X first").into());
             return;
         };
         let dest = self.cwd.clone();
@@ -155,13 +153,13 @@ impl App {
             Conflict::Replace => replaced = sources.iter().filter_map(existing).collect(),
         }
         if sources.is_empty() {
-            self.message = Some("Nothing to paste: every item already exists here".into());
+            self.message = Some(tr("Nothing to paste: every item already exists here").into());
             return;
         }
         let n = liman_core::format::items(sources.len());
         let (paste, label) = match clip.mode {
-            ClipMode::Copy => (Job::Copy { sources, dest }, format!("Copying {n}")),
-            ClipMode::Cut => (Job::Move { sources, dest }, format!("Moving {n}")),
+            ClipMode::Copy => (Job::Copy { sources, dest }, trf("Copying {}", &[&n])),
+            ClipMode::Cut => (Job::Move { sources, dest }, trf("Moving {}", &[&n])),
         };
         // "Replace" moves the old files to the trash first, so Ctrl+Z brings them back.
         let job = if replaced.is_empty() {
@@ -184,12 +182,12 @@ impl App {
         let (job, label) = if copy {
             (
                 Job::Copy { sources, dest },
-                format!("Copying {n} to “{name}”"),
+                trf("Copying {} to “{}”", &[&n, &name]),
             )
         } else {
             (
                 Job::Move { sources, dest },
-                format!("Moving {n} to “{name}”"),
+                trf("Moving {} to “{}”", &[&n, &name]),
             )
         };
         if self.start_job(job, label) {
@@ -216,9 +214,9 @@ impl App {
             (Dialog::Conflict { .. }, KeyCode::Char('r')) => self.paste_with(Conflict::Replace),
             (Dialog::Conflict { .. }, KeyCode::Char('s')) => self.paste_with(Conflict::Skip),
             (Dialog::ConfirmDelete { paths }, KeyCode::Char('y')) => {
-                let label = format!(
+                let label = trf(
                     "Deleting {} for good",
-                    liman_core::format::items(paths.len())
+                    &[&liman_core::format::items(paths.len())],
                 );
                 self.start_job(Job::Delete { paths }, label);
             }
@@ -230,16 +228,16 @@ impl App {
 
     pub(super) fn trash_targets(&mut self) {
         if self.cwd.starts_with(&self.trash_dir) {
-            self.message = Some("These items are already in the trash".into());
+            self.message = Some(tr("These items are already in the trash").into());
             return;
         }
         let paths = self.targets();
         if paths.is_empty() {
             return;
         }
-        let label = format!(
+        let label = trf(
             "Moving {} to the trash",
-            liman_core::format::items(paths.len())
+            &[&liman_core::format::items(paths.len())],
         );
         self.start_job(Job::Trash { paths }, label);
     }
@@ -261,7 +259,7 @@ impl App {
             KeyCode::Esc => self.rename = None,
             KeyCode::Enter => {
                 let RenameInput { path, text } = self.rename.take().expect("checked above");
-                let label = format!("Renaming to “{text}”");
+                let label = trf("Renaming to “{}”", &[&text]);
                 self.start_job(
                     Job::Rename {
                         path,
@@ -281,10 +279,10 @@ impl App {
     /// Ctrl+Z: reverses the newest finished operation.
     pub(super) fn undo(&mut self) {
         let Some(done) = self.history.pop() else {
-            self.message = Some("Nothing to undo".into());
+            self.message = Some(tr("Nothing to undo").into());
             return;
         };
-        let label = format!("Undoing: {}", done.describe());
+        let label = trf("Undoing: {}", &[&done.describe()]);
         if !self.start_job(Job::Undo(done.clone()), label) {
             self.history.push(done); // a job is running; keep it for later
         }
@@ -293,7 +291,7 @@ impl App {
     /// Starts `job` on a worker unless one is already running. Returns whether it started.
     pub(super) fn start_job(&mut self, job: Job, label: String) -> bool {
         if let Some(running) = &self.job {
-            self.message = Some(format!("Please wait: {} is still running", running.label));
+            self.message = Some(trf("Please wait: {} is still running", &[&running.label]));
             return false;
         }
         self.job = Some(JobStatus {
@@ -315,8 +313,8 @@ impl App {
     pub(super) fn on_job_finished(&mut self, outcome: Outcome) {
         self.job = None;
         self.message = Some(match &outcome.error {
-            Some(err) if outcome.done.is_empty() => format!("Failed: {err}"),
-            Some(err) => format!("{}, then failed: {err}", outcome.done.describe()),
+            Some(err) if outcome.done.is_empty() => trf("Failed: {}", &[err]),
+            Some(err) => trf("{}, then failed: {}", &[&outcome.done.describe(), err]),
             None => outcome.done.describe(),
         });
         // Select the result (new name, first copy) if it is in this folder, else keep the selection.

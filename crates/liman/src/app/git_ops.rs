@@ -2,6 +2,7 @@
 //! and the git panel (`g`) with the changed files and a diff of the selected one.
 //! Every command runs through `git` on a worker (ADR 0007).
 
+use liman_core::i18n::{tr, trf};
 use std::path::PathBuf;
 
 use liman_core::git::GitMark;
@@ -27,7 +28,7 @@ impl App {
 
     fn git_command(&mut self, args: Vec<String>, label: &str) {
         let Some(root) = self.git_root() else {
-            self.message = Some("Not inside a git repository".into());
+            self.message = Some(tr("Not inside a git repository").into());
             return;
         };
         self.message = Some(format!("{label}…"));
@@ -57,7 +58,7 @@ impl App {
     pub(super) fn git_stage(&mut self) {
         let paths = self.git_targets();
         if !paths.is_empty() {
-            self.git_command(Self::with_paths(&["add", "-A"], &paths), "Staged");
+            self.git_command(Self::with_paths(&["add", "-A"], &paths), tr("Staged"));
         }
     }
 
@@ -66,7 +67,7 @@ impl App {
         if !paths.is_empty() {
             self.git_command(
                 Self::with_paths(&["restore", "--staged"], &paths),
-                "Unstaged",
+                tr("Unstaged"),
             );
         }
     }
@@ -99,12 +100,12 @@ impl App {
                 &["restore", "--source=HEAD", "--staged", "--worktree"],
                 &tracked,
             );
-            self.git_command(args, "Discarded changes");
+            self.git_command(args, tr("Discarded changes"));
         }
         if !untracked.is_empty() {
-            let label = format!(
+            let label = trf(
                 "Moving {} to the trash",
-                liman_core::format::items(untracked.len())
+                &[&liman_core::format::items(untracked.len())],
             );
             self.start_job(liman_core::job::Job::Trash { paths: untracked }, label);
         }
@@ -117,7 +118,7 @@ impl App {
             .is_some_and(|g| g.files.iter().any(|(_, m)| m.is_staged()));
         if !staged {
             self.message =
-                Some("Nothing staged: stage files first (Space in the git panel)".into());
+                Some(tr("Nothing staged: stage files first (Space in the git panel)").into());
             return;
         }
         self.commit_input = Some(String::new());
@@ -136,7 +137,7 @@ impl App {
             KeyCode::Enter => {
                 let message = self.commit_input.take().unwrap_or_default();
                 if !message.trim().is_empty() {
-                    self.git_command(vec!["commit".into(), "-m".into(), message], "Committed");
+                    self.git_command(vec!["commit".into(), "-m".into(), message], tr("Committed"));
                 }
             }
             _ => {}
@@ -144,11 +145,11 @@ impl App {
     }
 
     pub(super) fn git_push(&mut self) {
-        self.git_command(vec!["push".into()], "Pushed");
+        self.git_command(vec!["push".into()], tr("Pushed"));
     }
 
     pub(super) fn git_pull(&mut self) {
-        self.git_command(vec!["pull".into(), "--ff-only".into()], "Pulled");
+        self.git_command(vec!["pull".into(), "--ff-only".into()], tr("Pulled"));
     }
 
     /// `b` (git panel): local branches in a list; Enter switches.
@@ -183,7 +184,7 @@ impl App {
                 let branch = branches.get(*selected).cloned();
                 self.branch_picker = None;
                 if let Some(branch) = branch {
-                    self.git_command(vec!["switch".into(), branch], "Switched branch");
+                    self.git_command(vec!["switch".into(), branch], tr("Switched branch"));
                 }
             }
             _ => {}
@@ -219,7 +220,7 @@ impl App {
             });
             self.request_git();
         } else {
-            self.message = Some("Not inside a git repository".into());
+            self.message = Some(tr("Not inside a git repository").into());
         }
     }
 
@@ -257,7 +258,7 @@ impl App {
             KeyCode::PageUp | KeyCode::Char('K') => panel.scroll = panel.scroll.saturating_sub(10),
             KeyCode::Char(' ') => self.git_toggle_stage(),
             KeyCode::Char('a') => {
-                self.git_command(vec!["add".into(), "-A".into()], "Staged everything");
+                self.git_command(vec!["add".into(), "-A".into()], tr("Staged everything"));
             }
             KeyCode::Char('d') => self.ask_git_discard(),
             KeyCode::Char('c') => self.begin_git_commit(),
@@ -304,7 +305,7 @@ impl App {
                         .collect::<Vec<_>>()
                         .join("\n")
                 })
-                .unwrap_or_else(|_| "(binary or unreadable)".into())
+                .unwrap_or_else(|_| tr("(binary or unreadable)").into())
         } else if mark.is_unstaged() {
             liman_core::git::run(&root, &["diff", "--no-color", "--", &file]).unwrap_or_else(|e| e)
         } else {

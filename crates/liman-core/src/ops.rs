@@ -12,7 +12,7 @@ pub fn validate_name(name: &str) -> io::Result<()> {
     if bad {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("“{name}” is not a valid name"),
+            crate::i18n::trf("“{}” is not a valid name", &[&name]),
         ));
     }
     Ok(())
@@ -28,7 +28,7 @@ pub fn rename(path: &Path, new_name: &str) -> io::Result<PathBuf> {
     if target.symlink_metadata().is_ok() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("“{new_name}” already exists"),
+            crate::i18n::trf("“{}” already exists", &[&new_name]),
         ));
     }
     fs::rename(path, &target)?;
@@ -82,7 +82,7 @@ pub fn copy_into(
     if dest_dir.starts_with(src) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "cannot copy a folder into itself",
+            crate::i18n::tr("cannot copy a folder into itself"),
         ));
     }
     let target = free_name(dest_dir, &name);
@@ -101,7 +101,7 @@ pub fn move_into(
     if dest_dir.starts_with(src) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "cannot move a folder into itself",
+            crate::i18n::tr("cannot move a folder into itself"),
         ));
     }
     if src.parent() == Some(dest_dir) {
@@ -125,7 +125,7 @@ pub fn move_path(from: &Path, to: &Path) -> io::Result<()> {
     if to.symlink_metadata().is_ok() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("{} already exists", to.display()),
+            crate::i18n::trf("{} already exists", &[&to.display()]),
         ));
     }
     match fs::rename(from, to) {

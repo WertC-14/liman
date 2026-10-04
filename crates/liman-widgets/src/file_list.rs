@@ -6,6 +6,7 @@
 //! It is a `StatefulWidget`: the caller keeps a `TableState` (selected row, scroll offset)
 //! between frames, the widget itself is rebuilt every frame.
 
+use liman_core::i18n::{tr, trf};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -26,7 +27,7 @@ use crate::theme;
 const COLUMN_SPACING: u16 = 2;
 const DETAILED_WIDTHS: [Constraint; 4] = [
     Constraint::Fill(1),
-    Constraint::Length(12),
+    Constraint::Length(14),
     Constraint::Length(12),
     Constraint::Length(16),
 ];
@@ -211,21 +212,22 @@ impl StatefulWidget for FileList<'_> {
             Some(o) if o.key == key => format!("{text} {}", if o.descending { "▼" } else { "▲" }),
             _ => text.to_string(),
         };
-        let size = Cell::from(Line::from(title("Size", SortKey::Size)).right_aligned());
-        let modified = Cell::from(Line::from(title("Modified", SortKey::Modified)).right_aligned());
+        let size = Cell::from(Line::from(title(tr("Size"), SortKey::Size)).right_aligned());
+        let modified =
+            Cell::from(Line::from(title(tr("Modified"), SortKey::Modified)).right_aligned());
         let (header, widths) = match self.mode {
             // Detailed: no icon column, the type is written out (Folder, PDF file, ...).
             ListMode::Detailed => (
                 Row::new([
-                    Cell::from(title("Name", SortKey::Name)),
-                    Cell::from(title("Type", SortKey::Type)),
+                    Cell::from(title(tr("Name"), SortKey::Name)),
+                    Cell::from(title(tr("Type"), SortKey::Type)),
                     size,
                     modified,
                 ]),
                 DETAILED_WIDTHS,
             ),
             ListMode::Normal => (
-                Row::new([Cell::from(""), Cell::from("Name"), size, modified]),
+                Row::new([Cell::from(""), Cell::from(tr("Name")), size, modified]),
                 [
                     Constraint::Length(boxes::WIDTH),
                     Constraint::Fill(1),
@@ -341,14 +343,14 @@ mod window_tests {
 /// "Folder", "PDF file", "File" (no extension).
 fn type_text(entry: &Entry) -> String {
     if entry.is_dir {
-        return "Folder".into();
+        return tr("Folder").into();
     }
     match entry.extension() {
-        Some(ext) => format!(
+        Some(ext) => trf(
             "{} file",
-            ext.chars().take(5).collect::<String>().to_uppercase()
+            &[&ext.chars().take(5).collect::<String>().to_uppercase()],
         ),
-        None => "File".into(),
+        None => tr("File").into(),
     }
 }
 

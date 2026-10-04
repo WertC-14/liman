@@ -75,7 +75,7 @@ impl Places {
         places.insert(
             after_home,
             Place {
-                name: "Recent".into(),
+                name: crate::i18n::tr("Recent").into(),
                 path: PathBuf::from("recent:///"),
                 kind: SpecialDir::Recent,
             },
@@ -124,10 +124,10 @@ impl Places {
 
 fn display_name(kind: SpecialDir, path: &Path) -> String {
     match kind {
-        SpecialDir::Home => "Home".into(),
-        SpecialDir::Trash => "Trash".into(),
-        SpecialDir::Recent => "Recent".into(),
-        SpecialDir::Root => "Computer".into(),
+        SpecialDir::Home => crate::i18n::tr("Home").into(),
+        SpecialDir::Trash => crate::i18n::tr("Trash").into(),
+        SpecialDir::Recent => crate::i18n::tr("Recent").into(),
+        SpecialDir::Root => crate::i18n::tr("Computer").into(),
         _ => path.file_name().map_or_else(
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),

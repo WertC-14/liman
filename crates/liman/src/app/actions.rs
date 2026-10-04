@@ -1,6 +1,7 @@
 //! Every user action in one list. The command palette (Ctrl+P), the right-click menu and the key
 //! overview use it, so a new action shows up everywhere at once.
 
+use liman_core::i18n::{tr, trf};
 use std::io::Write;
 
 use liman_core::job::Job;
@@ -125,7 +126,12 @@ impl Action {
         Self::Bookmark,
     ];
 
-    pub const fn label(self) -> &'static str {
+    /// The label in the interface language (palette, menu, help).
+    pub fn label(self) -> &'static str {
+        tr(self.label_en())
+    }
+
+    pub const fn label_en(self) -> &'static str {
         match self {
             Self::Open => "Open",
             Self::PathsToTerminal => "Put path in terminal",
@@ -223,7 +229,8 @@ pub fn matching(query: &str) -> Vec<Action> {
     Action::ALL
         .into_iter()
         .filter(|a| {
-            let label = a.label().to_lowercase();
+            // Both languages match: "kopyala" and "copy" find the same action.
+            let label = format!("{} {}", a.label(), a.label_en()).to_lowercase();
             words.iter().all(|w| label.contains(w))
         })
         .collect()
@@ -302,9 +309,9 @@ impl App {
         }
         let job = Job::CreateDir {
             parent: self.cwd.clone(),
-            name: "New folder".into(),
+            name: tr("New folder").into(),
         };
-        if self.start_job(job, "Creating a folder".into()) {
+        if self.start_job(job, tr("Creating a folder").into()) {
             self.rename_after_load = true;
         }
     }
@@ -325,8 +332,8 @@ impl App {
         let _ = write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()));
         let _ = out.flush();
         self.message = Some(match paths.as_slice() {
-            [one] => format!("Copied path {}", one.display()),
-            many => format!("Copied {} paths", many.len()),
+            [one] => trf("Copied path {}", &[&one.display()]),
+            many => trf("Copied {} paths", &[&many.len()]),
         });
     }
 
@@ -401,6 +408,24 @@ pub struct Menu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_action_has_a_turkish_label() {
+        for action in Action::ALL {
+            assert!(
+                liman_core::i18n::turkish(action.label_en()).is_some(),
+                "{:?}",
+                action
+            );
+        }
+    }
+
+    #[test]
+    fn palette_finds_actions_in_both_languages() {
+        // label_en is always searched; the Turkish label only when Turkish is on (global),
+        // so check the English path here and the table above.
+        assert_eq!(matching("trash")[0], Action::Trash);
+    }
 
     #[test]
     fn base64_matches_the_standard() {

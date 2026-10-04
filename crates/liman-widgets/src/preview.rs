@@ -4,6 +4,7 @@
 
 use liman_core::FileType;
 use liman_core::format;
+use liman_core::i18n::{tr, trf};
 use liman_core::preview::{Content, Preview};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -53,7 +54,7 @@ impl Widget for PreviewView<'_> {
             }
             Content::Text {
                 source: Some(tool), ..
-            } => details.push(format!("via {tool}")),
+            } => details.push(trf("via {}", &[tool])),
             _ => {}
         }
         let header = vec![
@@ -100,14 +101,14 @@ impl Widget for PreviewView<'_> {
 /// "PDF file", "Folder", "File".
 fn type_label(p: &Preview) -> String {
     if p.file_type == FileType::Folder {
-        return "Folder".into();
+        return tr("Folder").into();
     }
     match p.path.extension().and_then(|e| e.to_str()) {
-        Some(ext) if !ext.is_empty() => format!(
+        Some(ext) if !ext.is_empty() => trf(
             "{} file",
-            ext.chars().take(5).collect::<String>().to_uppercase()
+            &[&ext.chars().take(5).collect::<String>().to_uppercase()],
         ),
-        _ => "File".into(),
+        _ => tr("File").into(),
     }
 }
 
@@ -142,14 +143,15 @@ fn folder(
     buf: &mut Buffer,
 ) {
     let count = if more {
-        format!("{}+ items", total)
+        trf("{}+ items", &[&total])
     } else {
         format::items(total)
     };
     let mut summary = vec![Span::raw(count).fg(theme::fg()).bold()];
     for (t, n) in by_type.iter().take(4) {
         summary.push(Span::raw("  "));
-        summary.push(Span::raw(format!("{n} {}", type_plural(*t, *n))).fg(theme::type_color(*t)));
+        summary
+            .push(Span::raw(format!("{n} {}", tr(type_plural(*t, *n)))).fg(theme::type_color(*t)));
     }
     let mut out = vec![Line::from(summary), Line::default()];
     let room = usize::from(area.height).saturating_sub(out.len());

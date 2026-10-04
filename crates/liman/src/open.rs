@@ -48,9 +48,9 @@ pub fn plan(entry: &Entry, env: &Env) -> OpenPlan {
             path: entry.path.clone(),
         };
     }
-    OpenPlan::Unavailable(format!(
+    OpenPlan::Unavailable(liman_core::i18n::trf(
         "No graphical display (SSH?): cannot open “{}” here",
-        entry.name
+        &[&entry.name],
     ))
 }
 

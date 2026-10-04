@@ -11,6 +11,7 @@ use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 use crate::FileType;
+use crate::i18n::{tr, trf};
 use crate::sort::natural_cmp;
 
 /// At most this many lines of text, folder names or archive members are kept.
@@ -64,7 +65,7 @@ pub fn build(path: &Path, cols: u16, rows: u16) -> Preview {
     let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
     let file_type = FileType::from_path(path, is_dir);
     let content = match &meta {
-        None => Content::Note("Cannot read this item".into()),
+        None => Content::Note(tr("Cannot read this item").into()),
         Some(_) if is_dir => folder(path),
         Some(_) => file(path, file_type, cols, rows),
     };
@@ -86,7 +87,9 @@ fn file(path: &Path, file_type: FileType, cols: u16, rows: u16) -> Content {
     match file_type {
         FileType::Image if ext != "svg" => image(path, cols, rows),
         FileType::Pdf => command_lines("pdftotext", &["-l", "3", "-layout"], path, &["-"])
-            .unwrap_or_else(|| Content::Note("Install pdftotext (poppler) to see the text".into())),
+            .unwrap_or_else(|| {
+                Content::Note(tr("Install pdftotext (poppler) to see the text").into())
+            }),
         FileType::Archive => archive(path, &ext),
         _ => text(path),
     }
@@ -97,10 +100,10 @@ fn text(path: &Path) -> Content {
     let mut buf = Vec::with_capacity(TEXT_BYTES);
     let read = fs::File::open(path).and_then(|f| f.take(TEXT_BYTES as u64).read_to_end(&mut buf));
     if let Err(e) = read {
-        return Content::Note(format!("Cannot read: {e}"));
+        return Content::Note(trf("Cannot read: {}", &[&e]));
     }
     if buf.contains(&0) {
-        return Content::Note("Binary file".into());
+        return Content::Note(tr("Binary file").into());
     }
     let truncated = buf.len() == TEXT_BYTES;
     let text = String::from_utf8_lossy(&buf);
@@ -133,7 +136,7 @@ fn clean_line(line: &str) -> String {
 
 fn folder(path: &Path) -> Content {
     let Ok(read) = fs::read_dir(path) else {
-        return Content::Note("Cannot open this folder".into());
+        return Content::Note(tr("Cannot open this folder").into());
     };
     let mut names: Vec<(String, bool)> = Vec::new();
     let mut more = false;
@@ -182,7 +185,7 @@ fn image(path: &Path, cols: u16, rows: u16) -> Content {
         .and_then(|r| r.decode().map_err(|e| e.to_string()));
     let img = match decoded {
         Ok(img) => img,
-        Err(e) => return Content::Note(format!("Cannot show this image: {e}")),
+        Err(e) => return Content::Note(trf("Cannot show this image: {}", &[&e])),
     };
     let original = (img.width(), img.height());
     let (max_w, max_h) = (u32::from(cols.max(1)), u32::from(rows.max(1)) * 2);
@@ -214,7 +217,7 @@ fn archive(path: &Path, ext: &str) -> Content {
     } else {
         None
     };
-    result.unwrap_or_else(|| Content::Note("Archive (no listing tool for this format)".into()))
+    result.unwrap_or_else(|| Content::Note(tr("Archive (no listing tool for this format)").into()))
 }
 
 /// Runs `program args path tail` and keeps the first lines of its output.

@@ -2,6 +2,7 @@
 //! ratatui then sends only the cells that changed since the previous frame.
 
 use liman_core::format;
+use liman_core::i18n::{tr, trf};
 use liman_widgets::theme;
 use liman_widgets::{FileList, GridView, ListMode, Sidebar, breadcrumb, file_list, grid, sidebar};
 use ratatui::Frame;
@@ -57,7 +58,7 @@ fn render_theme_picker(frame: &mut Frame, app: &mut App) {
     let themes = &liman_widgets::theme::THEMES;
     let inner = popup(
         frame,
-        " Theme · ↑↓ preview · Enter keep · Esc cancel ",
+        tr(" Theme · ↑↓ preview · Enter keep · Esc cancel "),
         56,
         themes.len() as u16 + 4,
     );
@@ -88,7 +89,7 @@ fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
     let (title, lines): (&str, Vec<Line>) = match dialog {
         Dialog::Conflict { existing } => {
             let mut lines = vec![
-                Line::from(format!("{} already here:", format::items(existing.len())))
+                Line::from(trf("{} already here:", &[&format::items(existing.len())]))
                     .fg(theme::fg()),
             ];
             for path in existing.iter().take(5) {
@@ -100,42 +101,44 @@ fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
             }
             if existing.len() > 5 {
                 lines.push(
-                    Line::from(format!("  … and {} more", existing.len() - 5)).fg(theme::dim()),
+                    Line::from(trf("  … and {} more", &[&(existing.len() - 5)])).fg(theme::dim()),
                 );
             }
             lines.push(Line::default());
             lines.push(Line::from(vec![
                 Span::raw(" b ").bold().fg(theme::accent()),
-                Span::raw("keep both (Enter)   ").fg(theme::fg()),
+                Span::raw(tr("keep both (Enter)   ")).fg(theme::fg()),
                 Span::raw(" r ").bold().fg(theme::accent()),
-                Span::raw("replace (old to trash)   ").fg(theme::fg()),
+                Span::raw(tr("replace (old to trash)   ")).fg(theme::fg()),
                 Span::raw(" s ").bold().fg(theme::accent()),
-                Span::raw("skip   ").fg(theme::fg()),
+                Span::raw(tr("skip   ")).fg(theme::fg()),
                 Span::raw(" Esc ").bold().fg(theme::dim()),
             ]));
-            (" Paste ", lines)
+            (tr(" Paste "), lines)
         }
         Dialog::ConfirmDiscard { paths } => {
             let lines = vec![
-                Line::from(format!(
+                Line::from(trf(
                     "Throw away the changes in {}?",
-                    format::items(paths.len())
+                    &[&format::items(paths.len())],
                 ))
                 .fg(theme::fg())
                 .bold(),
-                Line::from("Tracked files go back to the last commit; new files go to the trash.")
-                    .fg(theme::dim()),
+                Line::from(tr(
+                    "Tracked files go back to the last commit; new files go to the trash.",
+                ))
+                .fg(theme::dim()),
                 Line::default(),
                 Line::from(vec![
                     Span::raw(" y ")
                         .bold()
                         .fg(theme::type_color(liman_core::FileType::Pdf)),
-                    Span::raw("discard   ").fg(theme::fg()),
+                    Span::raw(tr("discard   ")).fg(theme::fg()),
                     Span::raw(" n / Esc ").bold().fg(theme::accent()),
                     Span::raw("keep").fg(theme::fg()),
                 ]),
             ];
-            (" Git: discard ", lines)
+            (tr(" Git: discard "), lines)
         }
         Dialog::ConfirmDelete { paths } => {
             let what = match paths.as_slice() {
@@ -148,22 +151,24 @@ fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
                 many => format::items(many.len()),
             };
             let lines = vec![
-                Line::from(format!("Delete {what} for good?"))
+                Line::from(trf("Delete {} for good?", &[&what]))
                     .fg(theme::fg())
                     .bold(),
-                Line::from("This cannot be undone (Del moves to the trash instead).")
-                    .fg(theme::dim()),
+                Line::from(tr(
+                    "This cannot be undone (Del moves to the trash instead).",
+                ))
+                .fg(theme::dim()),
                 Line::default(),
                 Line::from(vec![
                     Span::raw(" y ")
                         .bold()
                         .fg(theme::type_color(liman_core::FileType::Pdf)),
-                    Span::raw("delete   ").fg(theme::fg()),
+                    Span::raw(tr("delete   ")).fg(theme::fg()),
                     Span::raw(" n / Esc ").bold().fg(theme::accent()),
                     Span::raw("keep").fg(theme::fg()),
                 ]),
             ];
-            (" Delete for good ", lines)
+            (tr(" Delete for good "), lines)
         }
     };
     let height = lines.len() as u16 + 4;
@@ -188,7 +193,7 @@ fn render_git_panel(frame: &mut Frame, app: &mut App) {
     let [body, keys] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
     frame.render_widget(
         Paragraph::new(
-            " Space stage/unstage  a stage all  c commit  d discard  p push  P pull  b branch  Enter show  Esc close",
+            tr(" Space stage/unstage  a stage all  c commit  d discard  p push  P pull  b branch  Enter show  Esc close"),
         )
         .fg(theme::dim()),
         keys,
@@ -200,7 +205,7 @@ fn render_git_panel(frame: &mut Frame, app: &mut App) {
 
     if git.files.is_empty() {
         frame.render_widget(
-            Paragraph::new("Working tree clean").fg(theme::dim()),
+            Paragraph::new(tr("Working tree clean")).fg(theme::dim()),
             list_area,
         );
         return;
@@ -261,7 +266,7 @@ fn render_branch_picker(frame: &mut Frame, app: &App) {
     };
     let inner = popup(
         frame,
-        " Switch branch · Enter switch · Esc ",
+        tr(" Switch branch · Enter switch · Esc "),
         48,
         branches.len().min(16) as u16 + 4,
     );
@@ -295,7 +300,7 @@ fn render_menu(frame: &mut Frame, app: &mut App) {
     let (list, area) = if let Some(query) = &menu.query {
         let inner = popup(
             frame,
-            " Commands · type to search · Enter run · Esc close ",
+            tr(" Commands · type to search · Enter run · Esc close "),
             60,
             ROWS as u16 + 5,
         );
@@ -361,52 +366,61 @@ fn render_menu(frame: &mut Frame, app: &mut App) {
     }
     if menu.items.is_empty() {
         frame.render_widget(
-            Paragraph::new(" No matching command").fg(theme::dim()),
+            Paragraph::new(tr(" No matching command")).fg(theme::dim()),
             list,
         );
     }
 }
 
+/// The `?` window: keys and what they do (English; shown through `tr`).
+const HELP_KEYS: &[(&str, &str)] = &[
+    ("Enter / double click", "open"),
+    ("Bksp / Alt+↑", "parent folder"),
+    ("Alt+← / Alt+→", "back / forward"),
+    ("Tab / Shift+Tab", "Places · Files · Terminal"),
+    ("v", "small list ↔ large view"),
+    ("+ / -  (Ctrl+wheel)", "zoom"),
+    ("/", "filter"),
+    ("Ctrl+F", "search in subfolders"),
+    ("Ctrl+D", "bookmark folder (again: remove)"),
+    ("Ctrl+H / .", "hidden files"),
+    ("s / S  (header click)", "sort by / reverse"),
+    ("Space / Ctrl+A", "mark / mark all"),
+    ("Ctrl+click / Shift+click", "mark one / mark a range"),
+    ("drag onto a folder", "move (hold Ctrl: copy)"),
+    ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
+    ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
+    ("Shift+Del", "delete for good (asks first)"),
+    ("F3", "preview panel"),
+    ("F4 / Ctrl+O", "terminal panel / full screen"),
+    ("Alt+Enter", "selected paths into the terminal"),
+    ("Ctrl+↑ / Ctrl+↓", "terminal size"),
+    ("t", "theme"),
+    ("Ctrl+P / right click", "all commands / menu"),
+    ("Ctrl+N / Alt+C", "new folder / copy path (works over SSH)"),
+    (
+        "Ctrl+G",
+        "git: changes, diff, stage, commit, push, pull, branch",
+    ),
+    ("~", "home"),
+    ("q", "quit"),
+];
+
 fn render_help(frame: &mut Frame) {
-    const KEYS: &[(&str, &str)] = &[
-        ("Enter / double click", "open"),
-        ("Bksp / Alt+↑", "parent folder"),
-        ("Alt+← / Alt+→", "back / forward"),
-        ("Tab / Shift+Tab", "Places · Files · Terminal"),
-        ("v", "small list ↔ large view"),
-        ("+ / -  (Ctrl+wheel)", "zoom"),
-        ("/", "filter"),
-        ("Ctrl+F", "search in subfolders"),
-        ("Ctrl+D", "bookmark folder (again: remove)"),
-        ("Ctrl+H / .", "hidden files"),
-        ("s / S  (header click)", "sort by / reverse"),
-        ("Space / Ctrl+A", "mark / mark all"),
-        ("Ctrl+click / Shift+click", "mark one / mark a range"),
-        ("drag onto a folder", "move (hold Ctrl: copy)"),
-        ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
-        ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
-        ("Shift+Del", "delete for good (asks first)"),
-        ("F3", "preview panel"),
-        ("F4 / Ctrl+O", "terminal panel / full screen"),
-        ("Alt+Enter", "selected paths into the terminal"),
-        ("Ctrl+↑ / Ctrl+↓", "terminal size"),
-        ("t", "theme"),
-        ("Ctrl+P / right click", "all commands / menu"),
-        ("Ctrl+N / Alt+C", "new folder / copy path (works over SSH)"),
-        (
-            "Ctrl+G",
-            "git: changes, diff, stage, commit, push, pull, branch",
-        ),
-        ("~", "home"),
-        ("q", "quit"),
-    ];
-    let inner = popup(frame, " Keys · any key closes ", 62, KEYS.len() as u16 + 4);
-    let lines: Vec<Line> = KEYS
+    let inner = popup(
+        frame,
+        tr(" Keys · any key closes "),
+        84,
+        HELP_KEYS.len() as u16 + 4,
+    );
+    let lines: Vec<Line> = HELP_KEYS
         .iter()
         .map(|(k, what)| {
             Line::from(vec![
-                Span::raw(format!(" {k:<24}")).fg(theme::accent()).bold(),
-                Span::raw(*what).fg(theme::fg()),
+                Span::raw(format!(" {:<26}", tr(k)))
+                    .fg(theme::accent())
+                    .bold(),
+                Span::raw(tr(what)).fg(theme::fg()),
             ])
         })
         .collect();
@@ -454,7 +468,7 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
             Layout::horizontal([Constraint::Length(sidebar::WIDTH + 2), Constraint::Fill(1)])
                 .areas(body);
         let places_focused = app.focus == Focus::Places;
-        let block = panel(" Places ", places_focused);
+        let block = panel(tr(" Places "), places_focused);
         let places = block.inner(side).inner(Margin::new(0, 1));
         frame.render_widget(block, side);
         app.sidebar_area = places;
@@ -478,7 +492,7 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
     };
     let files_focused = app.focus == Focus::Files;
     let title = match (&app.results, app.entry_count()) {
-        (Some(_), Some(n)) => format!(" Results · {} ", format::items(n)),
+        (Some(_), Some(n)) => trf(" Results · {} ", &[&format::items(n)]),
         (None, Some(n)) => format!(" {} · {} ", folder_name(app), format::items(n)),
         _ => format!(" {} ", folder_name(app)),
     };
@@ -495,7 +509,7 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
-    let block = panel(" Preview ", false);
+    let block = panel(tr(" Preview "), false);
     let inner = block.inner(area).inner(Margin::new(1, 1));
     frame.render_widget(block, area);
     app.preview.area = inner;
@@ -546,13 +560,12 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         let line = Line::from(vec![
             Span::raw(" ⌕ ").fg(accent).bold(),
             Span::raw(results.command.clone()).fg(theme::fg()).bold(),
-            Span::raw(format!(
+            Span::raw(trf(
                 "  ·  {} found in {}",
-                format::items(results.count),
-                app.cwd.display()
+                &[&format::items(results.count), &app.cwd.display()],
             ))
             .fg(theme::dim()),
-            Span::raw("   Bksp/Esc back to the folder").fg(theme::dim()),
+            Span::raw(tr("   Bksp/Esc back to the folder")).fg(theme::dim()),
         ]);
         frame.render_widget(Paragraph::new(line), area);
         return;
@@ -567,7 +580,7 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     if let Some(git) = &app.git {
         let changed = git.files.len();
         let text = if changed > 0 {
-            format!(" ⎇ {} · {} changed  Ctrl+G ", git.summary(), changed)
+            trf(" ⎇ {} · {} changed  Ctrl+G ", &[&git.summary(), &changed])
         } else {
             format!(" ⎇ {}  Ctrl+G ", git.summary())
         };
@@ -589,10 +602,10 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
     let message = match &app.listing {
-        Listing::Loading => "Loading…".to_string(),
-        Listing::Failed(err) => format!("Cannot open this folder: {err}"),
-        Listing::Ready(entries) if entries.is_empty() => "Folder is empty".to_string(),
-        Listing::Ready(_) if app.visible.is_empty() => format!("Nothing matches “{}”", app.filter),
+        Listing::Loading => tr("Loading…").to_string(),
+        Listing::Failed(err) => trf("Cannot open this folder: {}", &[err]),
+        Listing::Ready(entries) if entries.is_empty() => tr("Folder is empty").to_string(),
+        Listing::Ready(_) if app.visible.is_empty() => trf("Nothing matches “{}”", &[&app.filter]),
         Listing::Ready(entries) => {
             app.list_area = area;
             app.drawn_view = fitting_view(app.view, area);
@@ -642,11 +655,11 @@ fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
         theme::dim()
     };
     let hint = match app.term_mode {
-        TermMode::Fullscreen => " Terminal · Ctrl+O back to files ",
-        _ if focused => {
-            " Terminal · Tab on empty line: next panel · Ctrl+↑↓ size · F4 close · Ctrl+O full screen "
-        }
-        _ => " Terminal · Tab or click to type ",
+        TermMode::Fullscreen => tr(" Terminal · Ctrl+O back to files "),
+        _ if focused => tr(
+            " Terminal · Tab on empty line: next panel · Ctrl+↑↓ size · F4 close · Ctrl+O full screen ",
+        ),
+        _ => tr(" Terminal · Tab or click to type "),
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -721,6 +734,24 @@ fn fitting_view(wanted: View, area: Rect) -> View {
     }
 }
 
+/// Status bar key hints (English; shown through `tr`).
+const HINTS: &[(&str, &str)] = &[
+    ("Enter", "open"),
+    ("Bksp", "up"),
+    ("Tab", "panels"),
+    ("v", "small/large"),
+    ("t", "theme"),
+    ("Ctrl+P", "commands"),
+    ("?", "all keys"),
+    ("q", "quit"),
+];
+const FILTER_HINTS: &[(&str, &str)] = &[("Enter", "keep filter"), ("Esc", "clear")];
+const TERMINAL_HINTS: &[(&str, &str)] = &[
+    ("Ctrl+O", "files / full screen"),
+    ("F6", "focus"),
+    ("F4", "panel"),
+];
+
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = Vec::new();
     if app.term_mode != TermMode::Hidden && app.focus == Focus::Terminal
@@ -728,13 +759,9 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     {
         spans.push(Span::raw(" ⌂ ").fg(theme::dim()));
         spans.push(Span::raw(app.cwd.display().to_string()).fg(theme::fg()));
-        for (key, what) in [
-            ("Ctrl+O", "files / full screen"),
-            ("F6", "focus"),
-            ("F4", "panel"),
-        ] {
+        for (key, what) in TERMINAL_HINTS {
             spans.push(Span::raw(format!("  {key} ")).bold());
-            spans.push(Span::raw(what).fg(theme::dim()));
+            spans.push(Span::raw(tr(what)).fg(theme::dim()));
         }
         frame.render_widget(
             Paragraph::new(Line::from(spans))
@@ -745,9 +772,9 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
     if let Some(text) = &app.commit_input {
         let line = Line::from(vec![
-            Span::raw(" ⎇ Commit message: ").fg(theme::dim()),
+            Span::raw(tr(" ⎇ Commit message: ")).fg(theme::dim()),
             Span::raw(text.clone()).fg(theme::fg()).bold(),
-            Span::raw("▏   Enter commit · Esc cancel").fg(theme::dim()),
+            Span::raw(tr("▏   Enter commit · Esc cancel")).fg(theme::dim()),
         ]);
         frame.render_widget(
             Paragraph::new(line).style(Style::new().bg(theme::bar_bg())),
@@ -757,9 +784,9 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
     if let Some(text) = &app.search_input {
         let line = Line::from(vec![
-            Span::raw(" ⌕ Search in this folder and below: ").fg(theme::dim()),
+            Span::raw(tr(" ⌕ Search in this folder and below: ")).fg(theme::dim()),
             Span::raw(text.clone()).fg(theme::fg()).bold(),
-            Span::raw("▏   Enter search · Esc cancel").fg(theme::dim()),
+            Span::raw(tr("▏   Enter search · Esc cancel")).fg(theme::dim()),
         ]);
         frame.render_widget(
             Paragraph::new(line).style(Style::new().bg(theme::bar_bg())),
@@ -768,13 +795,13 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
     if let Some(input) = &app.rename {
-        spans.push(Span::raw(" Rename: ").fg(theme::dim()));
+        spans.push(Span::raw(tr(" Rename: ")).fg(theme::dim()));
         spans.push(Span::raw(input.text.as_str()).fg(theme::fg()).bold());
         spans.push(Span::raw("▏  ").fg(theme::fg()));
         spans.push(Span::raw(" Enter ").bold());
-        spans.push(Span::raw("rename ").fg(theme::dim()));
+        spans.push(Span::raw(tr("rename ")).fg(theme::dim()));
         spans.push(Span::raw(" Esc ").bold());
-        spans.push(Span::raw("cancel").fg(theme::dim()));
+        spans.push(Span::raw(tr("cancel")).fg(theme::dim()));
         frame.render_widget(
             Paragraph::new(Line::from(spans))
                 .style(Style::new().fg(theme::fg()).bg(theme::bar_bg())),
@@ -814,46 +841,35 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             Some(format::size(entry.size))
         };
         let size = size.map(|s| format!(" ({s})")).unwrap_or_default();
-        spans.push(Span::raw(format!(" | “{}” selected{size}", entry.name)).fg(theme::dim()));
+        spans.push(Span::raw(trf(" | “{}” selected{}", &[&entry.name, &size])).fg(theme::dim()));
     }
     if !app.marked.is_empty() {
-        spans.push(Span::raw(format!(" | {} marked", app.marked.len())).fg(theme::fg()));
+        spans.push(Span::raw(trf(" | {} marked", &[&app.marked.len()])).fg(theme::fg()));
     }
     if let Some(clip) = &app.clipboard {
-        let verb = match clip.mode {
-            ClipMode::Copy => "copied",
-            ClipMode::Cut => "cut",
+        let template = match clip.mode {
+            ClipMode::Copy => " | {} copied",
+            ClipMode::Cut => " | {} cut",
         };
-        spans.push(
-            Span::raw(format!(" | {} {verb}", format::items(clip.paths.len()))).fg(theme::dim()),
-        );
+        spans.push(Span::raw(trf(template, &[&format::items(clip.paths.len())])).fg(theme::dim()));
     }
     let view = match app.drawn_view {
-        View::Grid => format!("Grid {}", app.drawn_grid_level + 1),
-        other => other.name().to_string(),
+        View::Grid => trf("Grid {}", &[&(app.drawn_grid_level + 1)]),
+        other => tr(other.name()).to_string(),
     };
-    spans.push(Span::raw(format!(" | {view} view")).fg(theme::dim()));
+    spans.push(Span::raw(trf(" | {} view", &[&view])).fg(theme::dim()));
     spans.push(Span::raw("  "));
     if let Some(message) = &app.message {
         spans.push(Span::raw(format!("{message}  ")).fg(theme::fg()));
     }
-    let hints: &[(&str, &str)] = if app.filter_editing {
-        &[("Enter", "keep filter"), ("Esc", "clear")]
+    let hints = if app.filter_editing {
+        FILTER_HINTS
     } else {
-        &[
-            ("Enter", "open"),
-            ("Bksp", "up"),
-            ("Tab", "panels"),
-            ("v", "small/large"),
-            ("t", "theme"),
-            ("Ctrl+P", "commands"),
-            ("?", "all keys"),
-            ("q", "quit"),
-        ]
+        HINTS
     };
     for (key, what) in hints {
         spans.push(Span::raw(format!(" {key} ")).bold());
-        spans.push(Span::raw(format!("{what} ")).fg(theme::dim()));
+        spans.push(Span::raw(format!("{} ", tr(what))).fg(theme::dim()));
     }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::new().fg(theme::fg()).bg(theme::bar_bg())),
@@ -864,6 +880,27 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn help_and_hints_have_turkish() {
+        use liman_core::i18n::turkish;
+        let all = HELP_KEYS
+            .iter()
+            .chain(HINTS)
+            .chain(FILTER_HINTS)
+            .chain(TERMINAL_HINTS);
+        for (key, what) in all {
+            assert!(turkish(what).is_some(), "no Turkish for {what:?}");
+            // Key names with words in them ("double click", "header click") are translated too.
+            let has_word = key
+                .split(|c: char| !c.is_alphabetic())
+                .any(|w| w.len() > 3 && w.chars().all(|c| c.is_lowercase()));
+            assert!(
+                !has_word || turkish(key).is_some(),
+                "no Turkish for {key:?}"
+            );
+        }
+    }
     use liman_core::{Entry, FileType, Places};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

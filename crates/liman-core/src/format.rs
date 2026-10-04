@@ -4,6 +4,8 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, Local};
 
+use crate::i18n::{decimal_comma, tr, trf};
+
 /// Local wall-clock time. Re-exported so that UI crates do not need their own chrono dependency.
 pub type Timestamp = DateTime<Local>;
 
@@ -15,8 +17,8 @@ pub fn now() -> Timestamp {
 pub fn size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["kB", "MB", "GB", "TB", "PB"];
     match bytes {
-        1 => "1 byte".into(),
-        b if b < 1000 => format!("{b} bytes"),
+        1 => tr("1 byte").into(),
+        b if b < 1000 => trf("{} bytes", &[&b]),
         _ => {
             let mut value = bytes as f64 / 1000.0;
             let mut unit = 0;
@@ -24,15 +26,21 @@ pub fn size(bytes: u64) -> String {
                 value /= 1000.0;
                 unit += 1;
             }
-            format!("{value:.1} {}", UNITS[unit])
+            let number = format!("{value:.1}");
+            let number = if decimal_comma() {
+                number.replace('.', ",")
+            } else {
+                number
+            };
+            format!("{number} {}", UNITS[unit])
         }
     }
 }
 
 pub fn items(count: usize) -> String {
     match count {
-        1 => "1 item".into(),
-        n => format!("{n} items"),
+        1 => tr("1 item").into(),
+        n => trf("{} items", &[&n]),
     }
 }
 
@@ -45,15 +53,15 @@ pub fn relative(time: DateTime<Local>, now: DateTime<Local>) -> String {
     let days = (now.date_naive() - time.date_naive()).num_days();
     match days {
         d if d < 0 => time.format("%Y-%m-%d").to_string(),
-        0 => format!("Today {}", time.format("%H:%M")),
-        1 => format!("Yesterday {}", time.format("%H:%M")),
-        2..=6 => format!("{days} days ago"),
-        7..=13 => "Last week".into(),
-        14..=30 => format!("{} weeks ago", days / 7),
-        31..=59 => "Last month".into(),
-        60..=364 => format!("{} months ago", days / 30),
-        365..=729 => "Last year".into(),
-        _ => format!("{} years ago", days / 365),
+        0 => trf("Today {}", &[&time.format("%H:%M")]),
+        1 => trf("Yesterday {}", &[&time.format("%H:%M")]),
+        2..=6 => trf("{} days ago", &[&days]),
+        7..=13 => tr("Last week").into(),
+        14..=30 => trf("{} weeks ago", &[&(days / 7)]),
+        31..=59 => tr("Last month").into(),
+        60..=364 => trf("{} months ago", &[&(days / 30)]),
+        365..=729 => tr("Last year").into(),
+        _ => trf("{} years ago", &[&(days / 365)]),
     }
 }
 
