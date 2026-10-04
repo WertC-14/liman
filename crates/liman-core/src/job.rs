@@ -74,6 +74,7 @@ impl Done {
     }
 }
 
+#[derive(Debug)]
 pub struct Outcome {
     pub done: Done,
     /// First error; the job stops there.

@@ -10,6 +10,7 @@ use std::thread;
 use std::time::Duration;
 
 use liman_core::Entry;
+use liman_core::job::Outcome;
 use ratatui::crossterm::event::{self, Event};
 
 #[derive(Debug)]
@@ -21,6 +22,11 @@ pub enum AppEvent {
         path: PathBuf,
         result: Result<Vec<Entry>, String>,
     },
+    /// The running job got further (bytes for copy/move, items for the rest).
+    JobProgress {
+        done: u64,
+    },
+    JobFinished(Outcome),
 }
 
 /// How long the input thread waits for input before checking the pause flag again.

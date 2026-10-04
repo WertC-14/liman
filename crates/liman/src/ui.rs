@@ -10,7 +10,7 @@ use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::{App, Listing};
+use crate::app::{App, ClipMode, Listing};
 
 /// Below this width the sidebar is hidden so the list keeps enough room.
 const SIDEBAR_MIN_WIDTH: u16 = 70;
@@ -62,7 +62,7 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
             // can be borrowed mutably while `entries` is borrowed immutably.
             let rows: Vec<_> = app.visible.iter().map(|&i| &entries[i]).collect();
             frame.render_stateful_widget(
-                FileList::new(&rows, format::now(), app.drawn_view),
+                FileList::new(&rows, format::now(), app.drawn_view).marked(&app.marked),
                 area,
                 &mut app.table,
             );
@@ -90,6 +90,31 @@ fn fitting_view(wanted: ListMode, area: Rect) -> ListMode {
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = Vec::new();
+    if let Some(input) = &app.rename {
+        spans.push(Span::raw(" Rename: ").fg(DIM));
+        spans.push(Span::raw(input.text.as_str()).fg(FG).bold());
+        spans.push(Span::raw("▏  ").fg(FG));
+        spans.push(Span::raw(" Enter ").bold());
+        spans.push(Span::raw("rename ").fg(DIM));
+        spans.push(Span::raw(" Esc ").bold());
+        spans.push(Span::raw("cancel").fg(DIM));
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(Style::new().fg(FG).bg(BAR_BG)),
+            area,
+        );
+        return;
+    }
+    if let Some(job) = &app.job {
+        let percent = (job.done * 100)
+            .checked_div(job.total)
+            .unwrap_or(0)
+            .min(100);
+        spans.push(
+            Span::raw(format!(" {}… {percent}%  ", job.label))
+                .fg(FG)
+                .bold(),
+        );
+    }
     if app.filter_editing || !app.filter.is_empty() {
         spans.push(Span::raw(format!(" /{}", app.filter)).fg(FG).bold());
         if app.filter_editing {
@@ -109,6 +134,16 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         let size = size.map(|s| format!(" ({s})")).unwrap_or_default();
         spans.push(Span::raw(format!(" | “{}” selected{size}", entry.name)).fg(DIM));
     }
+    if !app.marked.is_empty() {
+        spans.push(Span::raw(format!(" | {} marked", app.marked.len())).fg(FG));
+    }
+    if let Some(clip) = &app.clipboard {
+        let verb = match clip.mode {
+            ClipMode::Copy => "copied",
+            ClipMode::Cut => "cut",
+        };
+        spans.push(Span::raw(format!(" | {} {verb}", format::items(clip.paths.len()))).fg(DIM));
+    }
     spans.push(Span::raw(format!(" | {} view", app.drawn_view.name())).fg(DIM));
     spans.push(Span::raw("  "));
     if let Some(message) = &app.message {
@@ -120,6 +155,10 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         &[
             ("Enter", "open"),
             ("⌫", "up"),
+            ("Space", "mark"),
+            ("^C ^X ^V", "copy cut paste"),
+            ("Del", "trash"),
+            ("F2", "rename"),
             ("+/-", "view"),
             ("/", "filter"),
             ("q", "quit"),
@@ -174,7 +213,7 @@ mod tests {
         assert!(rows[0].contains("⌂ Home › Projects"));
         assert!(rows.iter().any(|r| r.contains("Loading")));
         assert!(rows[2].contains("⌂ Home")); // sidebar
-        assert!(rows[7].contains("q quit"));
+        assert!(rows[7].contains("Del trash"));
     }
 
     #[test]

@@ -6,6 +6,8 @@ use ratatui::style::Color;
 pub const BG: Color = Color::Rgb(21, 22, 28);
 pub const BAR_BG: Color = Color::Rgb(32, 33, 41);
 pub const SELECTED_BG: Color = Color::Rgb(52, 54, 66);
+/// Rows marked with Space for a multi-item operation.
+pub const MARKED_BG: Color = Color::Rgb(34, 52, 84);
 pub const FG: Color = Color::Rgb(230, 230, 235);
 pub const DIM: Color = Color::Rgb(150, 150, 160);
 

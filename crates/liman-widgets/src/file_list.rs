@@ -6,6 +6,9 @@
 //! It is a `StatefulWidget`: the caller keeps a `TableState` (selected row, scroll offset)
 //! between frames, the widget itself is rebuilt every frame.
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 use liman_core::Entry;
 use liman_core::format::{self, Timestamp};
 use ratatui::buffer::Buffer;
@@ -16,7 +19,7 @@ use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 
 use crate::badge::{self, badge};
 use crate::boxes;
-use crate::theme::{DIM, FG, SELECTED_BG};
+use crate::theme::{DIM, FG, MARKED_BG, SELECTED_BG};
 
 /// Rows taken by the header line and the blank line under it.
 pub const HEADER_HEIGHT: u16 = 2;
@@ -48,12 +51,24 @@ pub struct FileList<'a> {
     entries: &'a [&'a Entry],
     now: Timestamp,
     mode: ListMode,
+    marked: Option<&'a HashSet<PathBuf>>,
 }
 
 impl<'a> FileList<'a> {
     /// `entries` are the rows to show, already filtered and sorted by the caller.
     pub fn new(entries: &'a [&'a Entry], now: Timestamp, mode: ListMode) -> Self {
-        Self { entries, now, mode }
+        Self {
+            entries,
+            now,
+            mode,
+            marked: None,
+        }
+    }
+
+    /// Entries whose path is in `marked` get a check mark and a tinted background.
+    pub fn marked(mut self, marked: &'a HashSet<PathBuf>) -> Self {
+        self.marked = Some(marked);
+        self
     }
 
     /// Hit-testing for mouse clicks: which row index sits at terminal cell (`column`, `row`)
@@ -78,16 +93,21 @@ impl<'a> FileList<'a> {
     }
 
     fn row(&self, entry: &Entry) -> Row<'static> {
-        let name = if entry.is_symlink {
-            Line::from(vec![Span::raw(entry.name.clone()), Span::raw(" ↗").fg(DIM)])
-        } else {
-            Line::from(entry.name.clone())
-        };
+        let is_marked = self.marked.is_some_and(|m| m.contains(&entry.path));
+        let mut name = Vec::new();
+        if is_marked {
+            name.push(Span::raw("✓ ").bold());
+        }
+        name.push(Span::raw(entry.name.clone()));
+        if entry.is_symlink {
+            name.push(Span::raw(" ↗").fg(DIM));
+        }
+        let name = Line::from(name);
         let size = Line::from(size_text(entry)).right_aligned().fg(DIM);
         let modified = Line::from(self.modified_text(entry))
             .right_aligned()
             .fg(DIM);
-        match self.mode {
+        let row = match self.mode {
             ListMode::Detailed => Row::new([
                 Cell::from(badge(entry)),
                 Cell::from(name.fg(FG)),
@@ -102,6 +122,11 @@ impl<'a> FileList<'a> {
             ])
             .height(boxes::HEIGHT)
             .bottom_margin(1),
+        };
+        if is_marked {
+            row.style(Style::new().bg(MARKED_BG))
+        } else {
+            row
         }
     }
 
@@ -226,6 +251,31 @@ mod tests {
             rows[9].contains("PDF") && rows[9].contains("Notes.pdf") && rows[9].contains("17.1 MB")
         );
         assert!(rows[6].trim().is_empty());
+    }
+
+    #[test]
+    fn marked_rows_get_a_check_mark_and_background() {
+        let owned = [
+            entry("a.txt", false, 1, None),
+            entry("b.txt", false, 1, None),
+        ];
+        let entries: Vec<&Entry> = owned.iter().collect();
+        let marked: HashSet<PathBuf> = [PathBuf::from("b.txt")].into();
+        let mut terminal = Terminal::new(TestBackend::new(60, 4)).unwrap();
+        let mut state = TableState::default().with_selected(Some(0));
+        terminal
+            .draw(|f| {
+                f.render_stateful_widget(
+                    FileList::new(&entries, format::now(), ListMode::Detailed).marked(&marked),
+                    f.area(),
+                    &mut state,
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..60).map(|x| buffer[(x, 3)].symbol()).collect();
+        assert!(row.contains("✓ b.txt"));
+        assert_eq!(buffer[(30, 3)].bg, MARKED_BG);
     }
 
     #[test]

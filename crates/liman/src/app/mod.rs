@@ -1,10 +1,16 @@
 //! Application state. Rendering reads it, events change it.
 
+mod file_ops;
+
+pub use file_ops::{ClipMode, Clipboard, JobStatus, RenameInput};
+
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
-use liman_core::{Entry, ListOptions, Place, Places};
+use liman_core::job::Done;
+use liman_core::{Entry, ListOptions, Place, Places, trash};
 use liman_widgets::breadcrumb::{self, Segment};
 use liman_widgets::{FileList, ListMode, Sidebar};
 use ratatui::crossterm::event::{
@@ -59,6 +65,16 @@ pub struct App {
     pub path_bar_area: Rect,
     pub places: Places,
     pub sidebar: Vec<Place>,
+    /// Entries marked with Space (or Ctrl+A) for a multi-item operation.
+    pub marked: HashSet<PathBuf>,
+    pub clipboard: Option<Clipboard>,
+    /// The file operation running on the worker, if any.
+    pub job: Option<JobStatus>,
+    /// Finished operations, newest last; undo (Ctrl+Z) walks back through them.
+    pub history: Vec<Done>,
+    /// F2 rename in progress.
+    pub rename: Option<RenameInput>,
+    trash_dir: PathBuf,
     /// Incremented on every listing request; older results are ignored.
     generation: u64,
     /// After going up a level, the folder we came from gets selected.
@@ -88,6 +104,12 @@ impl App {
             sidebar_area: Rect::default(),
             path_bar_area: Rect::default(),
             sidebar: places.sidebar(),
+            marked: HashSet::new(),
+            clipboard: None,
+            job: None,
+            history: Vec::new(),
+            rename: None,
+            trash_dir: trash::home_trash(&places.home),
             places,
             generation: 0,
             select_after_load: None,
@@ -104,6 +126,7 @@ impl App {
         self.generation += 1;
         self.listing = Listing::Loading;
         self.visible.clear();
+        self.marked.clear();
         self.filter.clear();
         self.filter_editing = false;
         self.dirty = true;
@@ -121,6 +144,8 @@ impl App {
                 path,
                 result,
             } => self.on_listing(generation, path, result),
+            AppEvent::JobProgress { done } => self.on_job_progress(done),
+            AppEvent::JobFinished(outcome) => self.on_job_finished(outcome),
         }
     }
 
@@ -145,15 +170,27 @@ impl App {
     fn on_key(&mut self, key: KeyEvent) {
         self.dirty = true;
         self.message = None;
+        if self.rename.is_some() {
+            self.on_rename_key(key);
+            return;
+        }
         if self.filter_editing {
             self.on_filter_key(key);
             return;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
+            // GUI shortcuts: Ctrl+C copies, so quitting is q or Ctrl+Q.
             KeyCode::Char('q') => self.running = false,
-            KeyCode::Char('c') if ctrl => self.running = false,
+            KeyCode::Char('c') if ctrl => self.copy_to_clipboard(ClipMode::Copy),
+            KeyCode::Char('x') if ctrl => self.copy_to_clipboard(ClipMode::Cut),
+            KeyCode::Char('v') if ctrl => self.paste(),
+            KeyCode::Char('a') if ctrl => self.mark_all(),
+            KeyCode::Delete => self.trash_targets(),
+            KeyCode::F(2) => self.begin_rename(),
+            KeyCode::Char(' ') => self.toggle_mark(),
             KeyCode::Esc if !self.filter.is_empty() => self.set_filter(String::new()),
+            KeyCode::Esc => self.marked.clear(),
             KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
             KeyCode::PageDown => self.move_selection(self.page()),
@@ -460,16 +497,20 @@ mod tests {
     }
 
     #[test]
-    fn q_and_ctrl_c_quit_esc_does_not() {
+    fn q_and_ctrl_q_quit_esc_and_ctrl_c_do_not() {
         let (mut app, _rx) = app();
         app.handle(key(KeyCode::Esc));
+        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        ))));
         assert!(app.running);
         app.handle(key(KeyCode::Char('q')));
         assert!(!app.running);
 
         let (mut app, _rx) = self::app();
         app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
-            KeyCode::Char('c'),
+            KeyCode::Char('q'),
             KeyModifiers::CONTROL,
         ))));
         assert!(!app.running);

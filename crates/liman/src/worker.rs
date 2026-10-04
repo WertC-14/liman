@@ -4,6 +4,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::thread;
 
+use std::time::{Duration, Instant};
+
+use liman_core::job::Job;
 use liman_core::{ListOptions, list_dir};
 
 use crate::event::AppEvent;
@@ -18,5 +21,23 @@ pub fn spawn_listing(tx: Sender<AppEvent>, generation: u64, path: PathBuf, opts:
             path,
             result,
         });
+    });
+}
+
+/// Progress events are sent at most this often, so a copy of many small files does not flood the UI.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Runs a file operation on a new thread and reports progress and the result.
+pub fn spawn_job(tx: Sender<AppEvent>, job: Job, trash_dir: PathBuf) {
+    thread::spawn(move || {
+        let mut last = Instant::now();
+        let progress_tx = tx.clone();
+        let outcome = job.run(&trash_dir, &mut |done| {
+            if last.elapsed() >= PROGRESS_INTERVAL {
+                last = Instant::now();
+                let _ = progress_tx.send(AppEvent::JobProgress { done });
+            }
+        });
+        let _ = tx.send(AppEvent::JobFinished(outcome));
     });
 }
