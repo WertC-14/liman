@@ -13,6 +13,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use liman_core::Places;
 
@@ -26,6 +27,9 @@ Usage: liman            open the current folder
 
 Inside: ? shows all keys, Ctrl+P all commands.
 Config: ~/.config/liman/config (theme, lang = tr | en, colors = truecolor | 256, hidden, sort, preview)";
+
+/// Shortest time between two frames (~60 per second).
+const FRAME: Duration = Duration::from_millis(16);
 
 fn main() -> io::Result<()> {
     match std::env::args().nth(1).as_deref() {
@@ -70,16 +74,35 @@ fn main() -> io::Result<()> {
     liman_widgets::colors::set_truecolor(truecolor);
     let mut app = App::new(cwd, Places::detect(&home), tx);
     app.apply_settings(&settings);
+    let mut last_draw = Instant::now() - FRAME;
     while app.running {
-        // Draw only when something changed (dirty flag), never on a fixed tick.
+        // Draw only when something changed (dirty flag), never on a fixed tick, and at most
+        // once per FRAME: a shell printing thousands of chunks costs 60 frames a second.
+        let mut wait = None;
         if app.dirty {
-            tui.draw(|frame| ui::render(frame, &mut app))?;
-            app.dirty = false;
+            let since = last_draw.elapsed();
+            if since >= FRAME {
+                tui.draw(|frame| ui::render(frame, &mut app))?;
+                app.dirty = false;
+                last_draw = Instant::now();
+            } else {
+                wait = Some(FRAME - since);
+            }
         }
 
-        // Block until the next event, then drain everything that queued up meanwhile,
-        // so a burst of events (e.g. fast scrolling) costs a single redraw.
-        let Ok(first) = rx.recv() else { break };
+        // Block until the next event (or the next frame is due), then drain everything that
+        // queued up meanwhile, so a burst of events (e.g. fast scrolling) costs a single redraw.
+        let first = match wait {
+            None => match rx.recv() {
+                Ok(ev) => ev,
+                Err(_) => break,
+            },
+            Some(timeout) => match rx.recv_timeout(timeout) {
+                Ok(ev) => ev,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            },
+        };
         app.handle(first);
         while let Ok(next) = rx.try_recv() {
             app.handle(next);

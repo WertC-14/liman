@@ -9,6 +9,9 @@ use ratatui::crossterm::event::KeyEvent;
 use super::App;
 use crate::terminal::Terminal;
 
+/// How often terminal output may trigger a look at the shell's folder.
+const CWD_CHECK: std::time::Duration = std::time::Duration::from_millis(100);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TermMode {
     /// No terminal on screen (the shell may still be running in the background).
@@ -165,6 +168,19 @@ impl App {
         };
         term.process(bytes);
         self.dirty = true;
+        // Long output (`find /`) comes in thousands of chunks: look at the shell's folder at most
+        // every CWD_CHECK; the quiet event after the output checks once more.
+        if self.cwd_checked.elapsed() >= CWD_CHECK {
+            self.follow_shell_cwd();
+        }
+    }
+
+    /// Opens the shell's current folder in the view if the user changed it there (`cd`).
+    pub(super) fn follow_shell_cwd(&mut self) {
+        self.cwd_checked = std::time::Instant::now();
+        let Some(term) = &mut self.terminal else {
+            return;
+        };
         if term.is_syncing() {
             return; // the shell is on its way to where the view already is
         }

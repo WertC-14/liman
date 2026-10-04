@@ -209,6 +209,8 @@ pub struct App {
     results_pending: Option<Results>,
     /// The shell's folder as last seen, so each `cd` in the shell is followed once.
     last_shell_cwd: Option<PathBuf>,
+    /// When the shell's folder was last read (throttles it during long output).
+    cwd_checked: Instant,
     /// Folder of the listing on its way, if any.
     loading_path: Option<PathBuf>,
     /// The listing on its way was started by following the shell (do not send `cd` back).
@@ -279,6 +281,7 @@ impl App {
             picker_area: Rect::default(),
             results_pending: None,
             last_shell_cwd: None,
+            cwd_checked: Instant::now(),
             loading_path: None,
             load_from_shell: false,
             list_area: Rect::default(),
@@ -404,7 +407,9 @@ impl App {
                     return;
                 };
                 term.on_quiet();
-                if let Some(out) = term.take_finished_command() {
+                let finished = term.take_finished_command();
+                self.follow_shell_cwd();
+                if let Some(out) = finished {
                     self.on_command_finished(out);
                 }
             }
@@ -1216,6 +1221,12 @@ impl App {
 
     /// A command run in the terminal finished: if it printed paths, show them up here.
     pub(super) fn on_command_finished(&mut self, out: crate::terminal::CommandOutput) {
+        // A command that moved the shell (`cd /usr/share`) is navigation, not a list of files:
+        // the view follows the folder instead.
+        let shell_now = self.terminal.as_ref().and_then(|t| t.cwd());
+        if shell_now.is_some_and(|now| now != out.cwd) {
+            return;
+        }
         let text = liman_core::results::strip_ansi(&out.bytes);
         let paths = liman_core::results::paths_from_output(&text, &out.cwd);
         if paths.is_empty() {
