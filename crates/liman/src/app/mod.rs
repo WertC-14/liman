@@ -1,8 +1,10 @@
 //! Application state. Rendering reads it, events change it.
 
+mod actions;
 mod file_ops;
 mod terminal_mode;
 
+pub use actions::{Action, Menu};
 pub use file_ops::{ClipMode, Clipboard, Dialog, JobStatus, RenameInput};
 pub use terminal_mode::{Focus, TermMode};
 
@@ -57,6 +59,12 @@ impl View {
             Self::Grid => None,
         }
     }
+}
+
+/// A key that types a character into a text field (not Ctrl+… or Alt+…, which are commands).
+fn is_typing(key: KeyEvent) -> bool {
+    !key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 
 /// Mouse button held on an entry.
@@ -157,6 +165,12 @@ pub struct App {
     drag: Option<Drag>,
     /// The large view `v` returns to from the compact list.
     last_large_view: View,
+    /// Command palette (Ctrl+P) or right-click menu.
+    pub menu: Option<Menu>,
+    /// Where the menu was drawn (for clicks). Written by the UI.
+    pub menu_area: Rect,
+    /// After the next listing, start renaming the selected entry (a folder just created).
+    rename_after_load: bool,
     /// A question in the middle of the screen (paste conflicts, permanent delete).
     pub dialog: Option<Dialog>,
     /// Ctrl+F: the search text being typed.
@@ -229,6 +243,9 @@ impl App {
             theme_picker: None,
             search_input: None,
             dialog: None,
+            menu: None,
+            menu_area: Rect::default(),
+            rename_after_load: false,
             current_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             help_open: false,
             picker_area: Rect::default(),
@@ -373,6 +390,9 @@ impl App {
         if self.dialog.is_some() {
             return self.on_dialog_key(key);
         }
+        if self.menu.is_some() {
+            return self.on_menu_key(key);
+        }
         if self.theme_picker.is_some() {
             return self.on_picker_key(key);
         }
@@ -419,6 +439,10 @@ impl App {
             KeyCode::Char('.') => self.toggle_hidden(),
             KeyCode::Char('f') if ctrl => self.search_input = Some(String::new()),
             KeyCode::Char('d') if ctrl => self.toggle_bookmark(),
+            KeyCode::Char('p') if ctrl => self.open_palette(),
+            // Ctrl+Shift+N / Ctrl+Shift+C arrive as Ctrl+N / Ctrl+C in most terminals: use Ctrl+N, Alt+C.
+            KeyCode::Char('n') if ctrl => self.new_folder(),
+            KeyCode::Char('c') if alt => self.copy_paths_osc52(),
             // In the grid, left/right move between tiles and up/down jump a row (like Nautilus).
             KeyCode::Right | KeyCode::Char('l') if self.drawn_view == View::Grid => {
                 self.move_selection(1)
@@ -476,7 +500,7 @@ impl App {
             // Arrows still move the selection while typing.
             KeyCode::Down => self.move_selection(1),
             KeyCode::Up => self.move_selection(-1),
-            KeyCode::Char(c) => {
+            KeyCode::Char(c) if is_typing(key) => {
                 let f = format!("{}{c}", self.filter);
                 self.set_filter(f);
             }
@@ -507,6 +531,9 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.on_click(mouse.column, mouse.row, mouse.modifiers)
             }
+            MouseEventKind::Down(MouseButton::Right) => {
+                self.open_context_menu(mouse.column, mouse.row)
+            }
             MouseEventKind::Drag(MouseButton::Left) if self.drag.is_some() => {
                 self.on_drag(mouse.column, mouse.row)
             }
@@ -520,6 +547,22 @@ impl App {
     }
 
     fn on_click(&mut self, column: u16, row: u16, modifiers: KeyModifiers) {
+        if self.menu.is_some() {
+            let row_index = usize::from(row.saturating_sub(self.menu_area.y));
+            let chosen = self
+                .menu
+                .as_ref()
+                .and_then(|m| m.items.get(m.offset + row_index))
+                .copied();
+            self.menu = None;
+            if self.menu_area.contains((column, row).into())
+                && let Some(action) = chosen
+                && self.action_available(action)
+            {
+                self.run_action(action);
+            }
+            return;
+        }
         if let Some((selected, _)) = self.theme_picker {
             let inside = self.picker_area.contains((column, row).into());
             let index = usize::from(row.saturating_sub(self.picker_area.y));
@@ -612,6 +655,74 @@ impl App {
             self.activate_selected();
         } else {
             self.last_click = Some((now, index));
+        }
+    }
+
+    /// Ctrl+P: every action, filtered by what you type.
+    fn open_palette(&mut self) {
+        self.menu = Some(Menu {
+            items: actions::matching(""),
+            selected: 0,
+            query: Some(String::new()),
+            at: (0, 0),
+            offset: 0,
+        });
+    }
+
+    /// Right click: actions for the entry under the mouse, or for the folder on empty space.
+    fn open_context_menu(&mut self, column: u16, row: u16) {
+        let items = match self.entry_at(column, row) {
+            Some(index) => {
+                let path = &self.visible_entries()[index].path;
+                if !self.marked.contains(path) {
+                    self.marked.clear(); // right-click on an unmarked entry acts on that entry only
+                }
+                self.table.select(Some(index));
+                Action::ON_ENTRY.to_vec()
+            }
+            None if self.list_area.contains((column, row).into()) => Action::ON_FOLDER.to_vec(),
+            None => return,
+        };
+        self.menu = Some(Menu {
+            items,
+            selected: 0,
+            query: None,
+            at: (column, row),
+            offset: 0,
+        });
+    }
+
+    fn on_menu_key(&mut self, key: KeyEvent) {
+        let Some(menu) = &mut self.menu else {
+            return;
+        };
+        let last = menu.items.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc => self.menu = None,
+            KeyCode::Up => menu.selected = menu.selected.saturating_sub(1),
+            KeyCode::Down => menu.selected = (menu.selected + 1).min(last),
+            KeyCode::Enter => {
+                let chosen = menu.items.get(menu.selected).copied();
+                self.menu = None;
+                if let Some(action) = chosen
+                    && self.action_available(action)
+                {
+                    self.run_action(action);
+                }
+            }
+            KeyCode::Backspace if menu.query.is_some() => {
+                let query = menu.query.as_mut().expect("checked");
+                query.pop();
+                menu.items = actions::matching(query);
+                menu.selected = 0;
+            }
+            KeyCode::Char(c) if menu.query.is_some() && is_typing(key) => {
+                let query = menu.query.as_mut().expect("checked");
+                query.push(c);
+                menu.items = actions::matching(query);
+                menu.selected = 0;
+            }
+            _ => {}
         }
     }
 
@@ -1042,7 +1153,7 @@ impl App {
             KeyCode::Backspace => {
                 text.pop();
             }
-            KeyCode::Char(c) => text.push(c),
+            KeyCode::Char(c) if is_typing(key) => text.push(c),
             KeyCode::Enter => {
                 let needle = self.search_input.take().unwrap_or_default();
                 if needle.is_empty() {
@@ -1177,6 +1288,9 @@ impl App {
             .and_then(|name| self.visible_entries().iter().position(|e| e.name == name))
             .unwrap_or(0);
         self.select_row(row);
+        if std::mem::take(&mut self.rename_after_load) {
+            self.begin_rename();
+        }
         self.dirty = true;
     }
 
@@ -1611,6 +1725,32 @@ mod tests {
         app.handle(ctrl_d());
         assert!(app.bookmarks.is_empty());
         assert_eq!(bookmarks_in_sidebar(&app), 0);
+    }
+
+    #[test]
+    fn palette_runs_the_chosen_action_and_right_click_offers_entry_actions() {
+        let (mut app, _rx) = app();
+        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Char('p'),
+            KeyModifiers::CONTROL,
+        ))));
+        for c in "small".chars() {
+            app.handle(key(KeyCode::Char(c)));
+        }
+        app.handle(key(KeyCode::Enter));
+        assert!(app.menu.is_none());
+        assert_eq!(app.view, View::Detailed); // "Small list / large view" ran
+
+        app.drawn_view = View::Detailed;
+        app.handle(AppEvent::Input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 30,
+            row: 5, // Projects
+            modifiers: KeyModifiers::NONE,
+        })));
+        let menu = app.menu.as_ref().expect("context menu");
+        assert_eq!(menu.items, Action::ON_ENTRY);
+        assert_eq!(selected_name(&app), "Projects");
     }
 
     #[test]

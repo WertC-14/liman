@@ -1,0 +1,365 @@
+//! Every user action in one list. The command palette (Ctrl+P), the right-click menu and the key
+//! overview use it, so a new action shows up everywhere at once.
+
+use std::io::Write;
+
+use liman_core::job::Job;
+
+use super::{App, Listing, TermMode, View};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Open,
+    PathsToTerminal,
+    OpenTerminalHere,
+    Copy,
+    Cut,
+    Paste,
+    Rename,
+    NewFolder,
+    CopyPath,
+    Bookmark,
+    Trash,
+    DeleteForGood,
+    MarkAll,
+    Undo,
+    Search,
+    Filter,
+    ToggleHidden,
+    SortNext,
+    SortReverse,
+    SmallLarge,
+    ZoomIn,
+    ZoomOut,
+    Back,
+    Forward,
+    Up,
+    Home,
+    Recent,
+    TerminalPanel,
+    TerminalFullScreen,
+    Theme,
+    Keys,
+    Quit,
+}
+
+impl Action {
+    pub const ALL: [Action; 32] = [
+        Self::Open,
+        Self::PathsToTerminal,
+        Self::OpenTerminalHere,
+        Self::Copy,
+        Self::Cut,
+        Self::Paste,
+        Self::Rename,
+        Self::NewFolder,
+        Self::CopyPath,
+        Self::Bookmark,
+        Self::Trash,
+        Self::DeleteForGood,
+        Self::MarkAll,
+        Self::Undo,
+        Self::Search,
+        Self::Filter,
+        Self::ToggleHidden,
+        Self::SortNext,
+        Self::SortReverse,
+        Self::SmallLarge,
+        Self::ZoomIn,
+        Self::ZoomOut,
+        Self::Back,
+        Self::Forward,
+        Self::Up,
+        Self::Home,
+        Self::Recent,
+        Self::TerminalPanel,
+        Self::TerminalFullScreen,
+        Self::Theme,
+        Self::Keys,
+        Self::Quit,
+    ];
+
+    /// Right-click on an entry.
+    pub const ON_ENTRY: [Action; 10] = [
+        Self::Open,
+        Self::PathsToTerminal,
+        Self::Copy,
+        Self::Cut,
+        Self::Rename,
+        Self::CopyPath,
+        Self::Bookmark,
+        Self::Trash,
+        Self::DeleteForGood,
+        Self::Paste,
+    ];
+
+    /// Right-click on empty space in the list.
+    pub const ON_FOLDER: [Action; 7] = [
+        Self::Paste,
+        Self::NewFolder,
+        Self::OpenTerminalHere,
+        Self::ToggleHidden,
+        Self::SortNext,
+        Self::SmallLarge,
+        Self::Bookmark,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Open => "Open",
+            Self::PathsToTerminal => "Put path in terminal",
+            Self::OpenTerminalHere => "Open terminal here",
+            Self::Copy => "Copy",
+            Self::Cut => "Cut",
+            Self::Paste => "Paste",
+            Self::Rename => "Rename",
+            Self::NewFolder => "New folder",
+            Self::CopyPath => "Copy path to clipboard",
+            Self::Bookmark => "Bookmark (toggle)",
+            Self::Trash => "Move to trash",
+            Self::DeleteForGood => "Delete for good",
+            Self::MarkAll => "Mark all",
+            Self::Undo => "Undo",
+            Self::Search => "Search in subfolders",
+            Self::Filter => "Filter this folder",
+            Self::ToggleHidden => "Show / hide hidden files",
+            Self::SortNext => "Sort by next column",
+            Self::SortReverse => "Reverse sort order",
+            Self::SmallLarge => "Small list / large view",
+            Self::ZoomIn => "Zoom in",
+            Self::ZoomOut => "Zoom out",
+            Self::Back => "Back",
+            Self::Forward => "Forward",
+            Self::Up => "Parent folder",
+            Self::Home => "Home",
+            Self::Recent => "Recent files",
+            Self::TerminalPanel => "Terminal panel",
+            Self::TerminalFullScreen => "Terminal full screen",
+            Self::Theme => "Theme…",
+            Self::Keys => "All keys",
+            Self::Quit => "Quit",
+        }
+    }
+
+    pub const fn keys(self) -> &'static str {
+        match self {
+            Self::Open => "Enter",
+            Self::PathsToTerminal => "Alt+Enter",
+            Self::OpenTerminalHere => "Tab",
+            Self::Copy => "Ctrl+C",
+            Self::Cut => "Ctrl+X",
+            Self::Paste => "Ctrl+V",
+            Self::Rename => "F2",
+            Self::NewFolder => "Ctrl+N",
+            Self::CopyPath => "Alt+C",
+            Self::Bookmark => "Ctrl+D",
+            Self::Trash => "Del",
+            Self::DeleteForGood => "Shift+Del",
+            Self::MarkAll => "Ctrl+A",
+            Self::Undo => "Ctrl+Z",
+            Self::Search => "Ctrl+F",
+            Self::Filter => "/",
+            Self::ToggleHidden => "Ctrl+H",
+            Self::SortNext => "s",
+            Self::SortReverse => "S",
+            Self::SmallLarge => "v",
+            Self::ZoomIn => "+",
+            Self::ZoomOut => "-",
+            Self::Back => "Alt+←",
+            Self::Forward => "Alt+→",
+            Self::Up => "Bksp",
+            Self::Home => "~",
+            Self::Recent => "",
+            Self::TerminalPanel => "F4",
+            Self::TerminalFullScreen => "Ctrl+O",
+            Self::Theme => "t",
+            Self::Keys => "?",
+            Self::Quit => "q",
+        }
+    }
+}
+
+/// Actions whose label contains every word of `query` (case-insensitive), in list order.
+pub fn matching(query: &str) -> Vec<Action> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    Action::ALL
+        .into_iter()
+        .filter(|a| {
+            let label = a.label().to_lowercase();
+            words.iter().all(|w| label.contains(w))
+        })
+        .collect()
+}
+
+impl App {
+    pub(super) fn run_action(&mut self, action: Action) {
+        use liman_core::sort::SortOrder;
+        match action {
+            Action::Open => self.activate_selected(),
+            Action::PathsToTerminal => self.paths_to_terminal(),
+            Action::OpenTerminalHere => {
+                if self.term_mode == TermMode::Hidden {
+                    self.toggle_panel();
+                } else {
+                    self.focus = super::Focus::Terminal;
+                }
+            }
+            Action::Copy => self.copy_to_clipboard(super::ClipMode::Copy),
+            Action::Cut => self.copy_to_clipboard(super::ClipMode::Cut),
+            Action::Paste => self.paste(),
+            Action::Rename => self.begin_rename(),
+            Action::NewFolder => self.new_folder(),
+            Action::CopyPath => self.copy_paths_osc52(),
+            Action::Bookmark => self.toggle_bookmark(),
+            Action::Trash => self.trash_targets(),
+            Action::DeleteForGood => self.ask_delete(),
+            Action::MarkAll => self.mark_all(),
+            Action::Undo => self.undo(),
+            Action::Search => self.search_input = Some(String::new()),
+            Action::Filter => self.filter_editing = true,
+            Action::ToggleHidden => self.toggle_hidden(),
+            Action::SortNext => {
+                let order = SortOrder {
+                    key: self.sort.key.next(),
+                    descending: false,
+                };
+                self.set_sort(order);
+            }
+            Action::SortReverse => {
+                let order = SortOrder {
+                    descending: !self.sort.descending,
+                    ..self.sort
+                };
+                self.set_sort(order);
+            }
+            Action::SmallLarge => self.toggle_compact(),
+            Action::ZoomIn => self.zoom(1),
+            Action::ZoomOut => self.zoom(-1),
+            Action::Back => self.go_back(),
+            Action::Forward => self.go_forward(),
+            Action::Up => self.go_up(),
+            Action::Home => self.load(self.places.home.clone()),
+            Action::Recent => self.show_recent(),
+            Action::TerminalPanel => self.toggle_panel(),
+            Action::TerminalFullScreen => self.toggle_fullscreen(),
+            Action::Theme => self.open_theme_picker(),
+            Action::Keys => self.help_open = true,
+            Action::Quit => self.running = false,
+        }
+    }
+
+    /// Ctrl+N: a new folder here; it is selected and its name opens for editing.
+    pub(super) fn new_folder(&mut self) {
+        if self.results.is_some() || !matches!(self.listing, Listing::Ready(_)) {
+            return;
+        }
+        let job = Job::CreateDir {
+            parent: self.cwd.clone(),
+            name: "New folder".into(),
+        };
+        if self.start_job(job, "Creating a folder".into()) {
+            self.rename_after_load = true;
+        }
+    }
+
+    /// Alt+C: the marked (or selected) paths to the clipboard with OSC 52, which the terminal
+    /// handles — so it also works over SSH, into the clipboard of the machine you sit at.
+    pub(super) fn copy_paths_osc52(&mut self) {
+        let paths = self.targets();
+        if paths.is_empty() {
+            return;
+        }
+        let text = paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut out = std::io::stdout();
+        let _ = write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()));
+        let _ = out.flush();
+        self.message = Some(match paths.as_slice() {
+            [one] => format!("Copied path {}", one.display()),
+            many => format!("Copied {} paths", many.len()),
+        });
+    }
+
+    /// Whether `action` makes sense right now (greyed out in menus otherwise).
+    pub fn action_available(&self, action: Action) -> bool {
+        let has_entry = self.selected_entry().is_some();
+        match action {
+            Action::Open
+            | Action::Copy
+            | Action::Cut
+            | Action::Rename
+            | Action::Trash
+            | Action::DeleteForGood
+            | Action::CopyPath
+            | Action::PathsToTerminal => has_entry,
+            Action::Paste => self.clipboard.is_some(),
+            Action::Undo => !self.history.is_empty(),
+            Action::Back => !self.back_stack.is_empty(),
+            Action::Forward => !self.forward_stack.is_empty(),
+            Action::NewFolder => self.results.is_none(),
+            Action::ZoomIn => {
+                self.view != View::Grid
+                    || self.drawn_grid_level + 1 < liman_widgets::grid::BOX_SIZES.len()
+            }
+            _ => true,
+        }
+    }
+}
+
+/// Standard base64 (RFC 4648) for OSC 52.
+fn base64(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(TABLE[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// What the palette or a right-click menu is showing.
+pub struct Menu {
+    pub items: Vec<Action>,
+    pub selected: usize,
+    /// Palette: the search text; right-click menu: `None`.
+    pub query: Option<String>,
+    /// Right-click menu: top-left corner on screen.
+    pub at: (u16, u16),
+    /// First item shown (long palette lists scroll). Written by the UI.
+    pub offset: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_matches_the_standard() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64("/home/şş".as_bytes()), "L2hvbWUvxZ/Fnw==");
+    }
+
+    #[test]
+    fn palette_matches_every_word() {
+        assert_eq!(matching("hidden"), [Action::ToggleHidden]);
+        assert_eq!(matching("term full"), [Action::TerminalFullScreen]);
+        assert_eq!(matching("").len(), Action::ALL.len());
+    }
+}

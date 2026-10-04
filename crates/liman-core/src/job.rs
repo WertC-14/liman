@@ -32,6 +32,11 @@ pub enum Job {
     Delete {
         paths: Vec<PathBuf>,
     },
+    /// A new empty folder at a free name like `New folder (2)` inside `parent`.
+    CreateDir {
+        parent: PathBuf,
+        name: String,
+    },
     /// Several jobs in order, undone as one (e.g. "replace" = trash the old files, then copy).
     Batch(Vec<Job>),
 }
@@ -50,6 +55,8 @@ pub enum Done {
     Trashed(Vec<TrashedItem>),
     /// An earlier job was reversed. Not undoable itself (no redo yet).
     Undone(Box<Done>),
+    /// A folder that was created.
+    Created(PathBuf),
     /// Number of items deleted for good. Not undoable.
     Deleted(usize),
     /// The parts of a batch, in the order they ran.
@@ -65,6 +72,7 @@ impl Done {
             Self::Trashed(v) => v.is_empty(),
             Self::Undone(_) => false,
             Self::Deleted(n) => *n == 0,
+            Self::Created(_) => false,
             Self::Batch(parts) => parts.iter().all(Done::is_empty),
         }
     }
@@ -87,6 +95,7 @@ impl Done {
             Self::Trashed(_) => None,
             Self::Undone(done) => done.restored_focus(),
             Self::Deleted(_) => None,
+            Self::Created(path) => Some(path),
             Self::Batch(parts) => parts.iter().rev().find_map(Done::focus),
         }
     }
@@ -94,7 +103,7 @@ impl Done {
     /// After undoing `self`, the path that is back (old name, original place).
     fn restored_focus(&self) -> Option<&Path> {
         match self {
-            Self::Copied(_) | Self::Undone(_) | Self::Deleted(_) => None,
+            Self::Copied(_) | Self::Undone(_) | Self::Deleted(_) | Self::Created(_) => None,
             Self::Batch(parts) => parts.iter().find_map(Done::restored_focus),
             Self::Moved(v) => v.first().map(|(from, _)| from.as_path()),
             Self::Renamed { from, .. } => Some(from),
@@ -112,6 +121,7 @@ impl Done {
             Self::Trashed(v) => format!("Moved {} to the trash", count(v.len())),
             Self::Undone(done) => format!("Undone: {}", done.describe()),
             Self::Deleted(n) => format!("Deleted {} for good", count(*n)),
+            Self::Created(path) => format!("Created “{}”", name(path)),
             Self::Batch(parts) => parts
                 .iter()
                 .filter(|d| !d.is_empty())
@@ -140,6 +150,7 @@ impl Job {
             Self::Trash { paths } => paths.len() as u64,
             Self::Undo(_) => 1,
             Self::Delete { paths } => paths.len() as u64,
+            Self::CreateDir { .. } => 1,
             Self::Batch(jobs) => jobs.iter().map(Job::total).sum(),
         }
     }
@@ -205,6 +216,13 @@ impl Job {
                 }
                 ok(Done::Deleted(paths.len()))
             }
+            Self::CreateDir { parent, name } => {
+                let path = ops::free_name(&parent, &name);
+                match std::fs::create_dir(&path) {
+                    Ok(()) => ok(Done::Created(path)),
+                    Err(e) => fail(Done::Batch(Vec::new()), &path, e),
+                }
+            }
             Self::Batch(jobs) => {
                 let mut parts = Vec::new();
                 let mut base = 0;
@@ -257,6 +275,10 @@ fn undo(done: &Done, trash_dir: &Path) -> std::io::Result<()> {
             }
         }
         Done::Undone(_) | Done::Deleted(_) => {}
+        // Into the trash, not deleted: the user may already have put things inside.
+        Done::Created(path) => {
+            trash::trash(path, trash_dir)?;
+        }
         Done::Batch(parts) => {
             for part in parts.iter().rev() {
                 undo(part, trash_dir)?;
@@ -413,6 +435,22 @@ mod tests {
         let undo = Job::Undo(out.done).run(&trash_dir, &mut |_| {});
         assert!(undo.error.is_none(), "{:?}", undo.error);
         assert_eq!(fs::read_to_string(dir.join("dest/a.txt")).unwrap(), "old");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn create_dir_picks_a_free_name_and_undo_trashes_it() {
+        let dir = test_dir("job-mkdir");
+        fs::create_dir(dir.join("New folder")).unwrap();
+        let out = Job::CreateDir {
+            parent: dir.clone(),
+            name: "New folder".into(),
+        }
+        .run(&dir.join("Trash"), &mut |_| {});
+        assert_eq!(out.done, Done::Created(dir.join("New folder (2)")));
+        assert!(dir.join("New folder (2)").is_dir());
+        Job::Undo(out.done).run(&dir.join("Trash"), &mut |_| {});
+        assert!(!dir.join("New folder (2)").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 

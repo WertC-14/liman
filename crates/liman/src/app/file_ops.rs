@@ -264,7 +264,7 @@ impl App {
             KeyCode::Backspace => {
                 input.text.pop();
             }
-            KeyCode::Char(c) => input.text.push(c),
+            KeyCode::Char(c) if super::is_typing(key) => input.text.push(c),
             _ => {}
         }
     }
@@ -282,7 +282,7 @@ impl App {
     }
 
     /// Starts `job` on a worker unless one is already running. Returns whether it started.
-    fn start_job(&mut self, job: Job, label: String) -> bool {
+    pub(super) fn start_job(&mut self, job: Job, label: String) -> bool {
         if let Some(running) = &self.job {
             self.message = Some(format!("Please wait: {} is still running", running.label));
             return false;

@@ -20,6 +20,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     render_screen(frame, app);
     if let Some(dialog) = &app.dialog {
         render_dialog(frame, dialog);
+    } else if app.menu.is_some() {
+        render_menu(frame, app);
     } else if app.theme_picker.is_some() {
         render_theme_picker(frame, app);
     } else if app.help_open {
@@ -140,6 +142,92 @@ fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
     frame.render_widget(Paragraph::new(lines), inner.inner(Margin::new(1, 1)));
 }
 
+/// Command palette (centered, with a search line) or right-click menu (at the mouse).
+fn render_menu(frame: &mut Frame, app: &mut App) {
+    let availability: Vec<bool> = app
+        .menu
+        .as_ref()
+        .map(|m| m.items.iter().map(|a| app.action_available(*a)).collect())
+        .unwrap_or_default();
+    let Some(menu) = &mut app.menu else {
+        return;
+    };
+    const ROWS: usize = 14;
+    let (list, area) = if let Some(query) = &menu.query {
+        let inner = popup(
+            frame,
+            " Commands · type to search · Enter run · Esc close ",
+            60,
+            ROWS as u16 + 5,
+        );
+        let input = Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), 1);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw("> ").fg(theme::accent()).bold(),
+                Span::raw(query.clone()).fg(theme::fg()).bold(),
+                Span::raw("▏").fg(theme::fg()),
+            ])),
+            input,
+        );
+        let list = Rect::new(
+            inner.x + 1,
+            inner.y + 3,
+            inner.width.saturating_sub(2),
+            ROWS as u16,
+        );
+        (list, inner)
+    } else {
+        let screen = frame.area();
+        let (w, h) = (40, menu.items.len() as u16 + 2);
+        let x = menu.at.0.min(screen.right().saturating_sub(w));
+        let y = menu.at.1.min(screen.bottom().saturating_sub(h));
+        let rect = Rect::new(x, y, w, h);
+        frame.render_widget(Clear, rect);
+        let block = panel("", true);
+        let inner = block.inner(rect);
+        frame.render_widget(block, rect);
+        (inner, inner)
+    };
+    let _ = area;
+    // Keep the selection in view.
+    let visible = usize::from(list.height);
+    if menu.selected < menu.offset {
+        menu.offset = menu.selected;
+    } else if menu.selected >= menu.offset + visible {
+        menu.offset = menu.selected + 1 - visible;
+    }
+    app.menu_area = list;
+    for (row, (i, action)) in menu
+        .items
+        .iter()
+        .enumerate()
+        .skip(menu.offset)
+        .take(visible)
+        .enumerate()
+    {
+        let available = availability.get(i).copied().unwrap_or(true);
+        let color = if available { theme::fg() } else { theme::dim() };
+        let keys = action.keys();
+        let width = usize::from(list.width);
+        let label_width = width.saturating_sub(keys.chars().count() + 2);
+        let mut line = Line::from(vec![
+            Span::raw(format!(" {:<label_width$}", action.label())).fg(color),
+            Span::raw(format!("{keys} ")).fg(theme::dim()),
+        ]);
+        if i == menu.selected {
+            line = line.style(Style::new().bg(theme::selected_bg())).bold();
+        }
+        let rect = Rect::new(list.x, list.y + row as u16, list.width, 1);
+        frame.render_widget(Paragraph::new(line), rect);
+    }
+    if menu.items.is_empty() {
+        frame.render_widget(
+            Paragraph::new(" No matching command").fg(theme::dim()),
+            list,
+        );
+    }
+}
+
 fn render_help(frame: &mut Frame) {
     const KEYS: &[(&str, &str)] = &[
         ("Enter / double click", "open"),
@@ -163,6 +251,8 @@ fn render_help(frame: &mut Frame) {
         ("Alt+Enter", "selected paths into the terminal"),
         ("Ctrl+↑ / Ctrl+↓", "terminal size"),
         ("t", "theme"),
+        ("Ctrl+P / right click", "all commands / menu"),
+        ("Ctrl+N / Alt+C", "new folder / copy path (works over SSH)"),
         ("~", "home"),
         ("q", "quit"),
     ];
@@ -543,6 +633,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ("Tab", "panels"),
             ("v", "small/large"),
             ("t", "theme"),
+            ("Ctrl+P", "commands"),
             ("?", "all keys"),
             ("q", "quit"),
         ]
