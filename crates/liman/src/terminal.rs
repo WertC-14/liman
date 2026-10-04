@@ -40,6 +40,8 @@ pub struct Terminal {
     user_typed: bool,
     /// Folder the file view wants the shell in, waiting for the previous `cd` to finish.
     pending_cd: Option<PathBuf>,
+    /// Unfinished escape sequence at the end of the last chunk (queries can be split across reads).
+    query_carry: Vec<u8>,
     /// The `cd` sent last and when; the next one waits until the shell is there (or 2 s passed).
     cd_in_flight: Option<(PathBuf, Instant)>,
     /// Output of the command line the user is running (from Enter until the prompt is back).
@@ -157,6 +159,7 @@ impl Terminal {
             user_typed: false,
             pending_cd: None,
             cd_in_flight: None,
+            query_carry: Vec::new(),
             capture: None,
         })
     }
@@ -167,11 +170,37 @@ impl Terminal {
 
     pub fn process(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
+        self.answer_queries(bytes);
         self.flush_cd();
         if let Some(capture) = &mut self.capture
             && capture.bytes.len() < MAX_CAPTURE
         {
             capture.bytes.extend_from_slice(bytes);
+        }
+    }
+
+    /// Answers the questions programs ask their terminal. Shells like fish 4 ask at start-up
+    /// (device attributes, version, background color, capabilities) and wait for the answer before
+    /// showing the prompt; without replies they hang or time out. vt100 only draws, so we reply here.
+    fn answer_queries(&mut self, bytes: &[u8]) {
+        let mut data = std::mem::take(&mut self.query_carry);
+        data.extend_from_slice(bytes);
+        let mut replies: Vec<Vec<u8>> = Vec::new();
+        let mut i = 0;
+        while let Some(pos) = data[i..].iter().position(|&b| b == 0x1b) {
+            let start = i + pos;
+            let Some((len, reply)) = parse_query(&data[start..], self) else {
+                // Possibly cut off: keep it for the next chunk (bounded, real queries are short).
+                if data.len() - start < 64 {
+                    self.query_carry = data[start..].to_vec();
+                }
+                break;
+            };
+            replies.extend(reply);
+            i = start + len.max(1);
+        }
+        for reply in replies {
+            self.send(&reply);
         }
     }
 
@@ -312,6 +341,66 @@ impl Drop for Terminal {
     }
 }
 
+/// One escape sequence at the start of `seq`: its length and the reply it needs (if any).
+/// `None` when the sequence is not complete yet.
+fn parse_query(seq: &[u8], term: &Terminal) -> Option<(usize, Option<Vec<u8>>)> {
+    let next = *seq.get(1)?;
+    match next {
+        // CSI: ESC [ params final
+        b'[' => {
+            let end = seq[2..].iter().position(|b| (0x40..=0x7e).contains(b))? + 2;
+            let body = &seq[2..end];
+            let reply = match (body, seq[end]) {
+                (b"" | b"0", b'c') => Some(b"\x1b[?62;22c".to_vec()), // DA1: VT220 with color
+                (b">0" | b">", b'q') => Some(b"\x1bP>|liman\x1b\\".to_vec()), // XTVERSION
+                (b"5", b'n') => Some(b"\x1b[0n".to_vec()),            // status: OK
+                (b"6", b'n') => {
+                    let (row, col) = term.screen().cursor_position();
+                    Some(format!("\x1b[{};{}R", row + 1, col + 1).into_bytes())
+                }
+                _ => None, // e.g. ESC[?u (kitty keyboard): no reply means "not supported"
+            };
+            Some((end + 1, reply))
+        }
+        // OSC: ESC ] ... (BEL | ESC \)
+        b']' => {
+            let (end, term_len) = find_string_end(&seq[2..])?;
+            let reply = match &seq[2..2 + end] {
+                b"10;?" => Some(osc_color(10, liman_widgets::theme::fg())),
+                b"11;?" => Some(osc_color(11, liman_widgets::theme::bg())),
+                _ => None,
+            };
+            Some((2 + end + term_len, reply))
+        }
+        // DCS: ESC P ... ESC \  (XTGETTCAP "+q": answer "not available")
+        b'P' => {
+            let (end, term_len) = find_string_end(&seq[2..])?;
+            let reply = seq[2..]
+                .starts_with(b"+q")
+                .then(|| b"\x1bP0+r\x1b\\".to_vec());
+            Some((2 + end + term_len, reply))
+        }
+        _ => Some((2, None)),
+    }
+}
+
+/// End of an OSC/DCS string: index of BEL or ESC \, and the terminator's length.
+fn find_string_end(data: &[u8]) -> Option<(usize, usize)> {
+    data.iter().enumerate().find_map(|(i, &b)| match b {
+        0x07 => Some((i, 1)),
+        0x1b if data.get(i + 1) == Some(&b'\\') => Some((i, 2)),
+        _ => None,
+    })
+}
+
+fn osc_color(code: u8, color: ratatui::style::Color) -> Vec<u8> {
+    let (r, g, b) = match color {
+        ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+        _ => (0, 0, 0),
+    };
+    format!("\x1b]{code};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}\x1b\\").into_bytes()
+}
+
 /// A command line without its prompt: everything after the last prompt symbol (`❯ $ # > %`).
 pub fn strip_prompt(line: &str) -> String {
     let line = line.trim();
@@ -408,6 +497,31 @@ mod tests {
         assert_eq!(strip_prompt("user@host:~$ ls -1"), "ls -1");
         assert_eq!(strip_prompt("❯"), "");
         assert_eq!(strip_prompt("  fd rs  "), "fd rs");
+    }
+
+    #[test]
+    fn start_up_queries_get_answers() {
+        let (tx, _rx) = mpsc::channel();
+        let term = Terminal::spawn_shell("/bin/sh", &std::env::temp_dir(), 10, 60, tx).unwrap();
+        let reply = |seq: &[u8]| parse_query(seq, &term).map(|(_, r)| r);
+        assert_eq!(reply(b"\x1b[0c"), Some(Some(b"\x1b[?62;22c".to_vec())));
+        assert_eq!(reply(b"\x1b[?u"), Some(None));
+        assert_eq!(
+            reply(b"\x1b[>0q"),
+            Some(Some(b"\x1bP>|liman\x1b\\".to_vec()))
+        );
+        assert!(
+            reply(b"\x1b]11;?\x07")
+                .unwrap()
+                .unwrap()
+                .starts_with(b"\x1b]11;rgb:")
+        );
+        assert_eq!(
+            reply(b"\x1bP+q696e646e\x1b\\"),
+            Some(Some(b"\x1bP0+r\x1b\\".to_vec()))
+        );
+        assert_eq!(reply(b"\x1b[6n"), Some(Some(b"\x1b[1;1R".to_vec())));
+        assert_eq!(reply(b"\x1b]11;"), None); // incomplete: wait for more
     }
 
     #[test]
