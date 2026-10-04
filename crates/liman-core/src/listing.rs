@@ -20,13 +20,14 @@ pub fn list_dir(dir: &Path, opts: ListOptions) -> io::Result<Vec<Entry>> {
         if !opts.show_hidden && name.starts_with('.') {
             continue;
         }
-        entries.push(read_entry(item.path(), name, opts));
+        entries.push(entry_for(item.path(), name, opts));
     }
     sort_entries(&mut entries);
     Ok(entries)
 }
 
-fn read_entry(path: std::path::PathBuf, name: String, opts: ListOptions) -> Entry {
+/// One entry with its metadata. `name` is what the user sees (normally the file name).
+pub fn entry_for(path: std::path::PathBuf, name: String, opts: ListOptions) -> Entry {
     let link = fs::symlink_metadata(&path).ok();
     let is_symlink = link.as_ref().is_some_and(|m| m.file_type().is_symlink());
     // Follow symlinks for size and type; a broken link falls back to the link itself.
