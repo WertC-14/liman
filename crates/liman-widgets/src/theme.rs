@@ -175,6 +175,14 @@ pub fn set_by_name(name: &str) -> bool {
     }
 }
 
+pub fn current_index() -> usize {
+    CURRENT.load(Ordering::Relaxed) % THEMES.len()
+}
+
+pub fn set_index(index: usize) {
+    CURRENT.store(index % THEMES.len(), Ordering::Relaxed);
+}
+
 /// Switches to the next theme and returns its name.
 pub fn cycle() -> &'static str {
     let next = (CURRENT.load(Ordering::Relaxed) + 1) % THEMES.len();

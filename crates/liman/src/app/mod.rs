@@ -130,6 +130,12 @@ pub struct App {
     dragging_panel: bool,
     /// The large view `v` returns to from the compact list.
     last_large_view: View,
+    /// `t`: the theme list (selected row, theme to go back to on Esc).
+    pub theme_picker: Option<(usize, usize)>,
+    /// `?`: the shortcut overview.
+    pub help_open: bool,
+    /// Where the theme list was drawn (for clicks). Written by the UI.
+    pub picker_area: Rect,
     /// Set while the view shows files found by a shell command instead of a folder.
     pub results: Option<Results>,
     /// Results on their way from the worker (becomes `results` when the listing arrives).
@@ -178,6 +184,9 @@ impl App {
             dragging_panel: false,
             last_large_view: View::Grid,
             results: None,
+            theme_picker: None,
+            help_open: false,
+            picker_area: Rect::default(),
             results_pending: None,
             last_shell_cwd: None,
             loading_path: None,
@@ -307,6 +316,13 @@ impl App {
         if self.focus == Focus::Places && self.on_places_key(key) {
             return;
         }
+        if self.theme_picker.is_some() {
+            return self.on_picker_key(key);
+        }
+        if self.help_open {
+            self.help_open = false; // any key closes the overview
+            return;
+        }
         if self.rename.is_some() {
             self.on_rename_key(key);
             return;
@@ -352,7 +368,8 @@ impl App {
             KeyCode::Char('/') => self.filter_editing = true,
             KeyCode::Char('~') => self.load(self.places.home.clone()),
             KeyCode::Char('v') => self.toggle_compact(),
-            KeyCode::Char('t') => self.next_theme(),
+            KeyCode::Char('t') => self.open_theme_picker(),
+            KeyCode::Char('?') => self.help_open = true,
             // Ctrl variants arrive only in terminals that report them; plain keys always work.
             KeyCode::Char('+' | '=') => self.zoom(1),
             KeyCode::Char('-') => self.zoom(-1),
@@ -411,6 +428,22 @@ impl App {
     }
 
     fn on_click(&mut self, column: u16, row: u16) {
+        if let Some((selected, _)) = self.theme_picker {
+            let inside = self.picker_area.contains((column, row).into());
+            let index = usize::from(row.saturating_sub(self.picker_area.y));
+            if inside && index < liman_widgets::theme::THEMES.len() {
+                if index == selected {
+                    self.save_theme();
+                } else {
+                    self.pick_theme(index);
+                }
+            }
+            return;
+        }
+        if self.help_open {
+            self.help_open = false;
+            return;
+        }
         if self.term_mode == TermMode::Fullscreen {
             return;
         }
@@ -518,9 +551,40 @@ impl App {
         true
     }
 
-    /// `t`: next color theme, remembered in the config file.
-    fn next_theme(&mut self) {
-        let name = liman_widgets::theme::cycle();
+    /// `t`: the theme list. Moving through it applies each theme at once (live preview).
+    fn open_theme_picker(&mut self) {
+        let current = liman_widgets::theme::current_index();
+        self.theme_picker = Some((current, current));
+    }
+
+    fn on_picker_key(&mut self, key: KeyEvent) {
+        let Some((selected, original)) = self.theme_picker else {
+            return;
+        };
+        let last = liman_widgets::theme::THEMES.len() - 1;
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.pick_theme(selected.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => self.pick_theme((selected + 1).min(last)),
+            KeyCode::Enter => self.save_theme(),
+            KeyCode::Esc | KeyCode::Char('q') => {
+                liman_widgets::theme::set_index(original);
+                self.theme_picker = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn pick_theme(&mut self, index: usize) {
+        if let Some((selected, _)) = &mut self.theme_picker {
+            *selected = index;
+            liman_widgets::theme::set_index(index);
+        }
+    }
+
+    /// Keeps the previewed theme and writes it to the config file.
+    fn save_theme(&mut self) {
+        self.theme_picker = None;
+        let name = liman_widgets::theme::palette().name;
         let file = liman_core::config::path(&self.places.home);
         self.message = Some(match liman_core::config::set(&file, "theme", name) {
             Ok(()) => format!("Theme: {name}"),
@@ -1043,6 +1107,18 @@ mod tests {
         app.handle(key(KeyCode::Enter)); // opens Home (/data)
         assert_eq!(app.focus, Focus::Files);
         assert!(matches!(app.listing, Listing::Loading));
+    }
+
+    #[test]
+    fn theme_picker_previews_and_esc_restores() {
+        let (mut app, _rx) = app();
+        let before = liman_widgets::theme::current_index();
+        app.handle(key(KeyCode::Char('t')));
+        app.handle(key(KeyCode::Down));
+        assert_ne!(liman_widgets::theme::current_index(), before); // previewed
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(liman_widgets::theme::current_index(), before);
+        assert!(app.theme_picker.is_none());
     }
 
     #[test]

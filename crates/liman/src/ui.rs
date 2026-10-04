@@ -9,7 +9,7 @@ use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Paragraph};
+use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::app::{App, ClipMode, Focus, Listing, TermMode, View};
 
@@ -17,6 +17,92 @@ use crate::app::{App, ClipMode, Focus, Listing, TermMode, View};
 const SIDEBAR_MIN_WIDTH: u16 = 70;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
+    render_screen(frame, app);
+    if app.theme_picker.is_some() {
+        render_theme_picker(frame, app);
+    } else if app.help_open {
+        render_help(frame);
+    }
+}
+
+/// A centered box of `width` × `height` cells with a rounded accent frame; returns the inside.
+fn popup(frame: &mut Frame, title: &str, width: u16, height: u16) -> Rect {
+    let area = frame.area();
+    let (w, h) = (width.min(area.width), height.min(area.height));
+    let rect = Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    );
+    frame.render_widget(Clear, rect);
+    let block = panel(title, true);
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    inner
+}
+
+fn render_theme_picker(frame: &mut Frame, app: &mut App) {
+    let themes = &liman_widgets::theme::THEMES;
+    let inner = popup(
+        frame,
+        " Theme · ↑↓ preview · Enter keep · Esc cancel ",
+        56,
+        themes.len() as u16 + 4,
+    );
+    let list = inner.inner(Margin::new(1, 1));
+    app.picker_area = list;
+    let selected = app.theme_picker.map_or(0, |(s, _)| s);
+    for (i, t) in themes.iter().enumerate() {
+        let mut spans = vec![
+            Span::raw(if i == selected { " ▶ " } else { "   " }).fg(theme::accent()),
+            Span::raw(format!("{:<12}", t.name)).fg(theme::fg()).bold(),
+        ];
+        // swatches on the theme's own background
+        spans.push(Span::raw(" ").bg(t.bg));
+        for c in t.types.iter().take(9) {
+            spans.push(Span::raw("■ ").fg(*c).bg(t.bg));
+        }
+        let mut line = Line::from(spans);
+        if i == selected {
+            line = line.style(Style::new().bg(theme::selected_bg()));
+        }
+        let row = Rect::new(list.x, list.y + i as u16, list.width, 1);
+        frame.render_widget(Paragraph::new(line), row.intersection(list));
+    }
+}
+
+fn render_help(frame: &mut Frame) {
+    const KEYS: &[(&str, &str)] = &[
+        ("Enter / double click", "open"),
+        ("Bksp / Alt+↑", "parent folder"),
+        ("Tab / Shift+Tab", "Places · Files · Terminal"),
+        ("v", "small list ↔ large view"),
+        ("+ / -  (Ctrl+wheel)", "zoom"),
+        ("/", "filter"),
+        ("Space / Ctrl+A", "mark / mark all"),
+        ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
+        ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
+        ("F4 / Ctrl+O", "terminal panel / full screen"),
+        ("Ctrl+↑ / Ctrl+↓", "terminal size"),
+        ("t", "theme"),
+        ("~", "home"),
+        ("q", "quit"),
+    ];
+    let inner = popup(frame, " Keys · any key closes ", 62, KEYS.len() as u16 + 4);
+    let lines: Vec<Line> = KEYS
+        .iter()
+        .map(|(k, what)| {
+            Line::from(vec![
+                Span::raw(format!(" {k:<24}")).fg(theme::accent()).bold(),
+                Span::raw(*what).fg(theme::fg()),
+            ])
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), inner.inner(Margin::new(1, 1)));
+}
+
+fn render_screen(frame: &mut Frame, app: &mut App) {
     let [top, body, status] = Layout::vertical([
         Constraint::Length(3), // framed title bar with the path chips
         Constraint::Min(0),
@@ -363,16 +449,10 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         &[
             ("Enter", "open"),
             ("Bksp", "up"),
-            ("Space", "mark"),
-            ("^C ^X ^V", "copy cut paste"),
-            ("Del", "trash"),
-            ("F2", "rename"),
-            ("^Z", "undo"),
-            ("v", "small/large"),
-            ("+/-", "zoom"),
-            ("t", "theme"),
             ("Tab", "panels"),
-            ("/", "filter"),
+            ("v", "small/large"),
+            ("t", "theme"),
+            ("?", "all keys"),
             ("q", "quit"),
         ]
     };
@@ -427,7 +507,7 @@ mod tests {
         assert!(rows.iter().any(|r| r.contains("Loading")));
         assert!(rows[3].contains("Places") && rows[3].contains("Projects")); // panel titles
         assert!(rows[5].contains("⌂ Home")); // sidebar
-        assert!(rows[13].contains("Del trash"));
+        assert!(rows[13].contains("? all keys"));
     }
 
     #[test]
