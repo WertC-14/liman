@@ -50,14 +50,6 @@ pub enum View {
 }
 
 impl View {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Detailed => "Detailed",
-            Self::Normal => "Normal",
-            Self::Grid => "Grid",
-        }
-    }
-
     /// The file list mode for the two list views; `None` for the grid.
     pub const fn list_mode(self) -> Option<ListMode> {
         match self {

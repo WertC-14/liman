@@ -813,21 +813,19 @@ fn fitting_view(wanted: View, area: Rect) -> View {
 
 /// Status bar key hints (English; shown through `tr`).
 const HINTS: &[(&str, &str)] = &[
-    ("Enter", "open"),
-    ("Bksp", "up"),
-    ("Tab", "panels"),
-    ("v", "small/large"),
-    ("t", "theme"),
-    ("Ctrl+P", "commands"),
-    ("?", "all keys"),
-    ("q", "quit"),
+    ("?", "Help"),
+    ("/", "Filter"),
+    ("Ctrl+F", "Search"),
+    ("Ctrl+H", "Hidden"),
+    ("Ctrl+P", "Commands"),
+    ("q", "Quit"),
 ];
-const FILTER_HINTS: &[(&str, &str)] = &[("Enter", "keep filter"), ("Esc", "clear")];
+const FILTER_HINTS: &[(&str, &str)] = &[("Enter", "Keep filter"), ("Esc", "Clear")];
 const PREVIEW_HINTS: &[(&str, &str)] = &[
-    ("↑↓ PgUp/PgDn", "scroll"),
-    ("g/G", "start / end"),
-    ("Enter", "full screen"),
-    ("Esc", "files"),
+    ("↑↓ PgUp/PgDn", "Scroll"),
+    ("g/G", "Start / end"),
+    ("Enter", "Full screen"),
+    ("Esc", "Files"),
 ];
 const TERMINAL_HINTS: &[(&str, &str)] = &[
     ("Ctrl+O", "files / full screen"),
@@ -910,36 +908,30 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         }
         spans.push(Span::raw("  "));
     }
+    // Left: what you are looking at; right: a few keys (cardea style). On a narrow screen the
+    // keys go first, the information stays.
     if let Some(count) = app.entry_count() {
         spans.push(Span::raw(format!(" {}", format::items(count))).fg(theme::fg()));
     }
     if let Some(entry) = app.selected_entry() {
-        let size = if entry.is_dir {
-            entry.item_count.map(format::items)
-        } else {
-            Some(format::size(entry.size))
-        };
-        let size = size.map(|s| format!(" ({s})")).unwrap_or_default();
-        spans.push(Span::raw(trf(" | “{}” selected{}", &[&entry.name, &size])).fg(theme::dim()));
+        spans.push(Span::raw(trf(" · “{}”", &[&entry.name])).fg(theme::dim()));
     }
     if !app.tab.marked.is_empty() {
-        spans.push(Span::raw(trf(" | {} marked", &[&app.tab.marked.len()])).fg(theme::fg()));
+        spans.push(
+            Span::raw(trf(" · {} marked", &[&app.tab.marked.len()]))
+                .fg(theme::accent())
+                .bold(),
+        );
     }
     if let Some(clip) = &app.clipboard {
         let template = match clip.mode {
-            ClipMode::Copy => " | {} copied",
-            ClipMode::Cut => " | {} cut",
+            ClipMode::Copy => " · {} copied",
+            ClipMode::Cut => " · {} cut",
         };
         spans.push(Span::raw(trf(template, &[&format::items(clip.paths.len())])).fg(theme::dim()));
     }
-    let view = match app.drawn_view {
-        View::Grid => trf("Grid {}", &[&(app.drawn_grid_level + 1)]),
-        other => tr(other.name()).to_string(),
-    };
-    spans.push(Span::raw(trf(" | {} view", &[&view])).fg(theme::dim()));
-    spans.push(Span::raw("  "));
     if let Some(message) = &app.message {
-        spans.push(Span::raw(format!("{message}  ")).fg(theme::fg()));
+        spans.push(Span::raw(format!("  {message}")).fg(theme::fg()));
     }
     let hints = if app.tab.focus == Focus::Preview {
         PREVIEW_HINTS
@@ -948,14 +940,23 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         HINTS
     };
+    let mut keys: Vec<Span> = Vec::new();
     for (key, what) in hints {
-        spans.push(Span::raw(format!(" {key} ")).bold());
-        spans.push(Span::raw(format!("{} ", tr(what))).fg(theme::dim()));
+        keys.push(Span::raw(format!("[{key}]")).fg(theme::accent()).bold());
+        keys.push(Span::raw(format!(" {}  ", tr(what))).fg(theme::dim()));
+    }
+    let left = Line::from(spans);
+    let mut right = Line::from(keys);
+    // Drop keys from the end until both fit.
+    while !right.spans.is_empty() && left.width() + right.width() + 2 > usize::from(area.width) {
+        right.spans.truncate(right.spans.len() - 2);
     }
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::new().fg(theme::fg()).bg(theme::bar_bg())),
+        Paragraph::new("").style(Style::new().fg(theme::fg()).bg(theme::bar_bg())),
         area,
     );
+    frame.render_widget(Paragraph::new(left), area);
+    frame.render_widget(Paragraph::new(right.right_aligned()), area);
 }
 
 #[cfg(test)]
@@ -1023,7 +1024,8 @@ mod tests {
         assert!(rows.iter().any(|r| r.contains("Loading")));
         assert!(rows[3].contains("Places") && rows[3].contains("Projects")); // panel titles
         assert!(rows[5].contains("⌂ Home")); // sidebar
-        assert!(rows[13].contains("? all keys"));
+        // Status bar: the keys sit on its right, cardea style.
+        assert!(rows[13].trim_end().ends_with("[q] Quit"), "{:?}", rows[13]);
     }
 
     #[test]
@@ -1087,6 +1089,10 @@ mod tests {
             rows.iter()
                 .any(|r| r.contains("RS") && r.contains("main.rs") && r.contains("13.8 kB"))
         );
-        assert!(rows[13].contains("1 item") && rows[13].contains("“main.rs” selected (13.8 kB)"));
+        assert!(
+            rows[13].starts_with(" 1 item · “main.rs”"),
+            "{:?}",
+            rows[13]
+        );
     }
 }
