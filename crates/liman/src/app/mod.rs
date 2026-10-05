@@ -1556,22 +1556,36 @@ impl App {
             }
         }
         // A reload of the same folder keeps the counts it had until the new ones arrive (no flicker).
-        type Known = (usize, Option<liman_core::FileType>);
+        // Counts of subfolders whose modification time is unchanged are still right: a folder's
+        // time changes whenever something inside it is added, removed or renamed.
+        type Known = (
+            usize,
+            Option<liman_core::FileType>,
+            Option<std::time::SystemTime>,
+        );
         let old_counts: std::collections::HashMap<PathBuf, Known> = match &self.listing {
             Listing::Ready(old) if path == self.cwd => old
                 .iter()
-                .filter_map(|e| Some((e.path.clone(), (e.item_count?, e.contents))))
+                .filter_map(|e| Some((e.path.clone(), (e.item_count?, e.contents, e.modified))))
                 .collect(),
             _ => Default::default(),
         };
+        let mut to_count = Vec::new();
         self.cwd = path;
         self.listing = match result {
             Ok(mut entries) => {
                 for entry in entries.iter_mut().filter(|e| e.is_dir) {
                     entry.special = self.places.kind_of(&entry.path);
-                    if let Some((count, contents)) = old_counts.get(&entry.path) {
+                    let old = old_counts.get(&entry.path);
+                    if let Some((count, contents, _)) = old {
                         entry.item_count = Some(*count);
                         entry.contents = *contents;
+                    }
+                    let unchanged = old.is_some_and(|(_, _, modified)| {
+                        modified.is_some() && *modified == entry.modified
+                    });
+                    if !unchanged {
+                        to_count.push(entry.path.clone());
                     }
                 }
                 // Folders come sorted by name; results keep the command's order.
@@ -1584,21 +1598,14 @@ impl App {
             }
             Err(err) => Listing::Failed(err),
         };
-        if let Listing::Ready(entries) = &self.listing {
-            let dirs: Vec<PathBuf> = entries
-                .iter()
-                .filter(|e| e.is_dir)
-                .map(|e| e.path.clone())
-                .collect();
-            if !dirs.is_empty() {
-                worker::spawn_counts(
-                    self.tx.clone(),
-                    self.generation,
-                    self.current_generation.clone(),
-                    dirs,
-                    self.options,
-                );
-            }
+        if !to_count.is_empty() {
+            worker::spawn_counts(
+                self.tx.clone(),
+                self.generation,
+                self.current_generation.clone(),
+                to_count,
+                self.options,
+            );
         }
         self.names_lower.clear();
         self.visible_for.clear();
@@ -2263,6 +2270,27 @@ mod count_tests {
             app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
         }
         assert_eq!(count(&app), Some(3));
+
+        // A reload with "sub" untouched counts nothing again.
+        let next = |app: &mut App| {
+            let ev = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let counts = matches!(ev, AppEvent::Counts { .. });
+            app.handle(ev);
+            counts
+        };
+        app.refresh();
+        while app.loading_path.is_some() {
+            assert!(!next(&mut app), "unchanged folder was counted again");
+        }
+        let late = rx.recv_timeout(Duration::from_millis(200));
+        assert!(!late.is_ok_and(|ev| matches!(ev, AppEvent::Counts { .. })));
+        // A new file inside changes the folder's time: counted again.
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(dir.join("sub/d"), "").unwrap();
+        app.refresh();
+        while count(&app) != Some(4) {
+            next(&mut app);
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
