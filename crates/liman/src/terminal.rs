@@ -364,8 +364,8 @@ impl Terminal {
             self.pending_cd = Some(dir); // try again at the next quiet moment
             return;
         }
-        let quoted = dir.to_string_lossy().replace('\'', r"'\''");
-        self.send(format!(" cd -- '{quoted}'\r\x0c").as_bytes());
+        let quoted = shell_quote(&dir.to_string_lossy());
+        self.send(format!(" cd -- {quoted}\r\x0c").as_bytes());
         self.cd_in_flight = Some((dir, Instant::now()));
     }
 
@@ -443,6 +443,11 @@ fn osc_color(code: u8, color: ratatui::style::Color) -> Vec<u8> {
     format!("\x1b]{code};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}\x1b\\").into_bytes()
 }
 
+/// Single-quoted for POSIX shells and fish: `it's` -> `'it'\''s'`.
+pub fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
 /// A command line without its prompt: everything after the last prompt symbol (`❯ $ # > %`).
 pub fn strip_prompt(line: &str) -> String {
     let line = line.trim();
@@ -516,6 +521,12 @@ pub fn key_bytes(key: KeyEvent, app_cursor: bool) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quoting_survives_spaces_and_quotes() {
+        assert_eq!(shell_quote("a b.txt"), "'a b.txt'");
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+    }
+
     use super::*;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};

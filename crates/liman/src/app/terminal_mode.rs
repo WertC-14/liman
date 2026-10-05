@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use ratatui::crossterm::event::KeyEvent;
 
 use super::App;
-use crate::terminal::Terminal;
+use crate::terminal::{Terminal, shell_quote};
 
 /// How often terminal output may trigger a look at the shell's folder.
 const CWD_CHECK: std::time::Duration = std::time::Duration::from_millis(100);
@@ -226,21 +226,5 @@ impl App {
             term.cd(path);
             self.last_shell_cwd = Some(path.clone());
         }
-    }
-}
-
-/// Single-quoted for POSIX shells and fish: `it's` -> `'it'\''s'`.
-pub fn shell_quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', r"'\''"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn quoting_survives_spaces_and_quotes() {
-        assert_eq!(shell_quote("a b.txt"), "'a b.txt'");
-        assert_eq!(shell_quote("it's"), r"'it'\''s'");
     }
 }
