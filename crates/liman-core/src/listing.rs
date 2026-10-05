@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::sort::sort_entries;
 use crate::{Entry, FileType};
@@ -20,18 +20,28 @@ pub fn list_dir(dir: &Path, opts: ListOptions) -> io::Result<Vec<Entry>> {
         if !opts.show_hidden && name.starts_with('.') {
             continue;
         }
-        entries.push(entry_for(item.path(), name, opts));
+        // The link bit comes with the directory entry (no extra `stat`).
+        let is_symlink = item.file_type().is_ok_and(|t| t.is_symlink());
+        entries.push(entry_with(item.path(), name, is_symlink));
     }
     sort_entries(&mut entries);
     Ok(entries)
 }
 
-/// One entry with its metadata. `name` is what the user sees (normally the file name).
-pub fn entry_for(path: std::path::PathBuf, name: String, _opts: ListOptions) -> Entry {
-    let link = fs::symlink_metadata(&path).ok();
-    let is_symlink = link.as_ref().is_some_and(|m| m.file_type().is_symlink());
-    // Follow symlinks for size and type; a broken link falls back to the link itself.
-    let meta = fs::metadata(&path).ok().or(link);
+/// One entry with its metadata, for a path that did not come from `read_dir`.
+/// `name` is what the user sees (normally the file name).
+pub fn entry_for(path: PathBuf, name: String) -> Entry {
+    let is_symlink = fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+    entry_with(path, name, is_symlink)
+}
+
+/// One `stat` (following links) per entry; a broken link falls back to the link itself.
+fn entry_with(path: PathBuf, name: String, is_symlink: bool) -> Entry {
+    let meta = fs::metadata(&path).ok().or_else(|| {
+        is_symlink
+            .then(|| fs::symlink_metadata(&path).ok())
+            .flatten()
+    });
     let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
 
     Entry {
@@ -156,6 +166,21 @@ mod tests {
             Some(2)
         );
 
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn links_are_followed_and_broken_ones_still_listed() {
+        let dir = tempdir("links");
+        fs::write(dir.join("target.txt"), b"12345").unwrap();
+        std::os::unix::fs::symlink("target.txt", dir.join("good")).unwrap();
+        std::os::unix::fs::symlink("nowhere", dir.join("broken")).unwrap();
+        let entries = list_dir(&dir, ListOptions::default()).unwrap();
+        let get = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
+        assert!(get("good").is_symlink);
+        assert_eq!(get("good").size, 5); // the target's size
+        assert!(get("broken").is_symlink);
+        assert!(!get("target.txt").is_symlink);
         fs::remove_dir_all(&dir).unwrap();
     }
 

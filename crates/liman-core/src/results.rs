@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::Entry;
 use crate::listing::entry_for;
-use crate::{Entry, ListOptions};
 
 /// At most this many results are shown (a `find /` can print millions of lines).
 pub const MAX_RESULTS: usize = 5000;
@@ -94,7 +94,7 @@ pub fn entries_for(paths: &[PathBuf], base: &Path) -> Vec<Entry> {
                 .strip_prefix(base)
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| path.display().to_string());
-            entry_for(path.clone(), name, ListOptions { show_hidden: true })
+            entry_for(path.clone(), name)
         })
         .collect()
 }
