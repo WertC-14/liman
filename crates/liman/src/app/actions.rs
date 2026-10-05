@@ -153,7 +153,7 @@ impl Action {
             Self::Rename => "Rename",
             Self::NewFolder => "New folder",
             Self::CopyPath => "Copy path to clipboard",
-            Self::Bookmark => "Bookmark (toggle)",
+            Self::Bookmark => "Pin to Quick Access (toggle)",
             Self::Trash => "Move to trash",
             Self::DeleteForGood => "Delete for good",
             Self::MarkAll => "Mark all",

@@ -913,7 +913,7 @@ impl App {
         in_list.or_else(
             || match self.sidebar_item(self.sidebar_row_at(column, row)?) {
                 SideItem::Place(i) => Some(&self.sidebar[i])
-                    .filter(|p| p.kind != liman_core::SpecialDir::Recent)
+                    .filter(|p| p.kind != liman_core::SpecialDir::Recent && p.path.is_dir())
                     .map(|p| p.path.clone()),
                 SideItem::Dir(d) => Some(self.tree.rows()[d].path.clone()),
                 SideItem::Label => None,
@@ -948,6 +948,17 @@ impl App {
         } else {
             vec![dragged]
         };
+        // Dropped on the QUICK ACCESS title or the rule under the places: pin them there.
+        if let Some(row) = self.sidebar_row_at(column, row)
+            && (row == 0 || row == self.sidebar.len() + 1)
+        {
+            for path in sources {
+                if !self.bookmarks.contains(&path) {
+                    self.toggle_bookmark_for(path);
+                }
+            }
+            return;
+        }
         if !copy && let Some(path) = sources.iter().find(|p| self.is_protected(p)) {
             let name = path.file_name().map_or_else(
                 || path.display().to_string(),
@@ -1179,12 +1190,15 @@ impl App {
         self.message = Some(trf("Theme: {}", &[&name]));
     }
 
-    /// Opens sidebar place `i`: a folder, or the Recent list.
+    /// Opens sidebar place `i`: a folder, the Recent list, or a pinned file (in its app).
     fn open_place(&mut self, i: usize) {
         self.sidebar_selected = i + 1; // the row under the QUICK ACCESS title
         let place = self.sidebar[i].clone();
         if place.kind == liman_core::SpecialDir::Recent {
             self.show_recent();
+        } else if place.kind == liman_core::SpecialDir::Bookmark && place.path.is_file() {
+            let entry = liman_core::listing::entry_for(place.path, place.name);
+            self.open_file(&entry);
         } else {
             self.load(place.path);
         }
@@ -1207,12 +1221,13 @@ impl App {
     }
 
     /// Ctrl+D: bookmark the selected folder (or this folder), or remove it if already there.
+    /// Ctrl+D: pins the selected file or folder to Quick Access (this folder when nothing is
+    /// selected), or unpins it.
     fn toggle_bookmark(&mut self) {
-        let folder = match self.selected_entry() {
-            Some(e) if e.is_dir => e.path.clone(),
-            _ => self.tab.cwd.clone(),
-        };
-        self.toggle_bookmark_for(folder);
+        let path = self
+            .selected_entry()
+            .map_or_else(|| self.tab.cwd.clone(), |e| e.path.clone());
+        self.toggle_bookmark_for(path);
     }
 
     fn toggle_bookmark_for(&mut self, folder: PathBuf) {
@@ -1439,6 +1454,12 @@ impl App {
             self.load(path);
             return;
         }
+        let entry = entry.clone();
+        self.open_file(&entry);
+    }
+
+    /// Opens a file in its app (or the editor over SSH).
+    fn open_file(&mut self, entry: &Entry) {
         match open::plan(entry, &open::Env::current()) {
             OpenPlan::Desktop(path) => {
                 let name = entry.name.clone();
@@ -2327,6 +2348,31 @@ mod tests {
         app.handle(ctrl_d());
         assert!(app.bookmarks.is_empty());
         assert_eq!(bookmarks_in_sidebar(&app), 0);
+        // Files can be pinned too.
+        app.handle(key(KeyCode::Char('j'))); // a.txt
+        app.handle(ctrl_d());
+        assert_eq!(app.bookmarks, [PathBuf::from("/data/a.txt")]);
+        app.handle(ctrl_d());
+        // Dragging an entry onto the QUICK ACCESS title pins it.
+        let on_title = (app.sidebar_area.x + 3, app.sidebar_area.y);
+        app.handle(AppEvent::Input(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 4, // first row of the list: Music
+            modifiers: KeyModifiers::NONE,
+        })));
+        for (kind, (column, row)) in [
+            (MouseEventKind::Drag(MouseButton::Left), on_title),
+            (MouseEventKind::Up(MouseButton::Left), on_title),
+        ] {
+            app.handle(AppEvent::Input(Event::Mouse(MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })));
+        }
+        assert_eq!(app.bookmarks, [PathBuf::from("/data/Music")]);
     }
 
     #[test]
