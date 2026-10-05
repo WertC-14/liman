@@ -220,9 +220,11 @@ impl App {
             Ok(_) => label,
             Err(e) => format!("git: {}", first_line(&e)),
         });
-        self.request_git();
+        // A refresh asks for the git status itself when its listing arrives.
         if self.results.is_none() {
             self.refresh();
+        } else {
+            self.request_git();
         }
         if let Some(panel) = &mut self.git_panel {
             panel.diff_for = None; // reload the diff for the (maybe changed) file

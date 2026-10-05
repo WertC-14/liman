@@ -66,8 +66,12 @@ pub enum AppEvent {
     },
     /// Local branches (or the error text) for the branch picker.
     GitBranches(Result<Vec<String>, String>),
-    /// Something changed in this folder (after a short quiet period).
-    FolderChanged(PathBuf),
+    /// Something changed in this folder (reported after a short quiet period); `at` is when the
+    /// newest change was seen, so a listing started after it can be trusted to include it.
+    FolderChanged {
+        dir: PathBuf,
+        at: std::time::Instant,
+    },
     /// The embedded shell exited.
     TermExited(u64),
     /// The embedded shell finished its start-up output (time to clear the greeting).

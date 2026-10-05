@@ -217,6 +217,8 @@ pub struct App {
     cwd_checked: Instant,
     /// Folder of the listing on its way, if any.
     loading_path: Option<PathBuf>,
+    /// When the newest listing was requested (it shows every change made before).
+    listing_started: Instant,
     /// The listing on its way was started by following the shell (do not send `cd` back).
     load_from_shell: bool,
     trash_dir: PathBuf,
@@ -288,6 +290,7 @@ impl App {
             last_shell_cwd: None,
             cwd_checked: Instant::now(),
             loading_path: None,
+            listing_started: Instant::now(),
             load_from_shell: false,
             list_area: Rect::default(),
             sidebar_area: Rect::default(),
@@ -340,6 +343,7 @@ impl App {
         self.current_generation
             .store(self.generation, std::sync::atomic::Ordering::Relaxed);
         self.loading_path = Some(self.cwd.clone());
+        self.listing_started = Instant::now();
         worker::spawn_listing(
             self.tx.clone(),
             self.generation,
@@ -373,6 +377,7 @@ impl App {
         self.filter_editing = false;
         self.dirty = true;
         self.loading_path = Some(path.to_path_buf());
+        self.listing_started = Instant::now();
     }
 
     pub fn handle(&mut self, event: AppEvent) {
@@ -401,8 +406,15 @@ impl App {
             AppEvent::TermQuiet(id) if !self.is_active_terminal(id) => {
                 self.on_background_terminal(id, tabs::BackgroundTerm::Quiet)
             }
-            AppEvent::FolderChanged(dir) => {
-                if dir == self.cwd && self.results.is_none() && self.loading_path.is_none() {
+            // Our own jobs refresh the folder as soon as they finish; their changes reach the
+            // watcher too, a moment later. A listing started after the change already shows it.
+            AppEvent::FolderChanged { dir, at } => {
+                let moving_away = self.loading_path.as_ref().is_some_and(|p| *p != self.cwd);
+                if dir == self.cwd
+                    && self.results.is_none()
+                    && !moving_away
+                    && at > self.listing_started
+                {
                     self.refresh();
                 }
             }
@@ -2168,6 +2180,38 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         })));
         assert_eq!(selected_name(&app), "b.pdf");
+    }
+
+    #[test]
+    fn folder_changes_already_in_the_listing_do_not_reload() {
+        let (mut app, _rx) = app();
+        let generation = app.generation;
+        // A change seen before the listing was requested is in it: nothing to do.
+        let before = app.listing_started - Duration::from_millis(1);
+        app.handle(AppEvent::FolderChanged {
+            dir: PathBuf::from("/data"),
+            at: before,
+        });
+        assert_eq!(app.generation, generation);
+        // A newer change reloads, even while that listing is still on its way.
+        app.handle(AppEvent::FolderChanged {
+            dir: PathBuf::from("/data"),
+            at: Instant::now(),
+        });
+        assert_eq!(app.generation, generation + 1);
+        app.handle(AppEvent::FolderChanged {
+            dir: PathBuf::from("/data"),
+            at: Instant::now(),
+        });
+        assert_eq!(app.generation, generation + 2);
+        // Changes in the folder we are leaving do not cancel the move.
+        app.handle(key(KeyCode::Enter)); // into Music
+        let moving = app.generation;
+        app.handle(AppEvent::FolderChanged {
+            dir: PathBuf::from("/data"),
+            at: Instant::now(),
+        });
+        assert_eq!(app.generation, moving);
     }
 
     #[test]

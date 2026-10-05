@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -24,13 +24,14 @@ impl FolderWatch {
         let (raw_tx, raw_rx) = mpsc::channel::<PathBuf>();
         // Debounce thread: collect events, report each folder once it has been quiet.
         thread::spawn(move || {
-            let mut pending: Option<PathBuf> = None;
+            // The folder and when its newest change was seen.
+            let mut pending: Option<(PathBuf, Instant)> = None;
             loop {
                 match raw_rx.recv_timeout(SETTLE) {
-                    Ok(dir) => pending = Some(dir),
+                    Ok(dir) => pending = Some((dir, Instant::now())),
                     Err(RecvTimeoutError::Timeout) => {
-                        if let Some(dir) = pending.take()
-                            && tx.send(AppEvent::FolderChanged(dir)).is_err()
+                        if let Some((dir, at)) = pending.take()
+                            && tx.send(AppEvent::FolderChanged { dir, at }).is_err()
                         {
                             return;
                         }
