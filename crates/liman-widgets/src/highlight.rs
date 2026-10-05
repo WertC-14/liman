@@ -177,11 +177,33 @@ fn style_plain() -> Style {
     Style::new().fg(theme::fg())
 }
 
-/// The state after `lines` (used to start highlighting in the middle of a file).
+/// The state after `lines` (used to start highlighting in the middle of a file). Runs every
+/// frame over everything above the first line on screen, so it builds no spans: only `/* */`
+/// comments and Markdown code fences carry over to the next line, other languages have no state.
 pub fn state_after<'a>(lang: Lang, lines: impl Iterator<Item = &'a str>) -> State {
     let mut state = State::default();
-    for line in lines {
-        line_spans(lang, line, &mut state);
+    match lang {
+        Lang::CLike => {
+            let mut chars = Vec::new();
+            for line in lines {
+                // Only a `/*` can open a comment and only a `*/` can close it.
+                let marker = if state.block_comment { "*/" } else { "/*" };
+                if !line.contains(marker) {
+                    continue;
+                }
+                chars.clear();
+                chars.extend(line.chars());
+                scan(lang, &chars, &mut state, |_, _, _| {});
+            }
+        }
+        Lang::Markdown => {
+            for line in lines {
+                if is_fence(line) {
+                    state.fence = !state.fence;
+                }
+            }
+        }
+        Lang::Hash | Lang::Dash | Lang::Plain => {}
     }
     state
 }
@@ -195,15 +217,20 @@ pub fn line_spans(lang: Lang, line: &str, state: &mut State) -> Vec<Span<'static
     }
 }
 
-fn code(lang: Lang, line: &str, state: &mut State) -> Vec<Span<'static>> {
-    let chars: Vec<char> = line.chars().collect();
-    let mut out: Vec<Span<'static>> = Vec::new();
-    let mut plain = String::new();
-    let flush = |plain: &mut String, out: &mut Vec<Span<'static>>| {
-        if !plain.is_empty() {
-            out.push(Span::styled(std::mem::take(plain), style_plain()));
-        }
-    };
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Token {
+    Comment,
+    Str,
+    Number,
+    Word,
+    /// Any other single character (operators, spaces, ...).
+    Other,
+}
+
+/// Splits a line of code into tokens (`emit` gets each one as a range of char indices) and
+/// updates `state`. Shared by highlighting and by [`state_after`], so both agree on where
+/// comments start and end.
+fn scan(lang: Lang, chars: &[char], state: &mut State, mut emit: impl FnMut(Token, usize, usize)) {
     let mut i = 0;
     while i < chars.len() {
         // Inside a block comment: until */.
@@ -216,10 +243,7 @@ fn code(lang: Lang, line: &str, state: &mut State) -> Vec<Span<'static>> {
                 i += 2;
                 state.block_comment = false;
             }
-            out.push(Span::styled(
-                chars[start..i.min(chars.len())].iter().collect::<String>(),
-                style_comment(),
-            ));
+            emit(Token::Comment, start, i.min(chars.len()));
             continue;
         }
         let c = chars[i];
@@ -230,15 +254,10 @@ fn code(lang: Lang, line: &str, state: &mut State) -> Vec<Span<'static>> {
             _ => false,
         };
         if line_comment {
-            flush(&mut plain, &mut out);
-            out.push(Span::styled(
-                chars[i..].iter().collect::<String>(),
-                style_comment(),
-            ));
-            break;
+            emit(Token::Comment, i, chars.len());
+            return;
         }
         if lang == Lang::CLike && c == '/' && chars.get(i + 1).copied() == Some('*') {
-            flush(&mut plain, &mut out);
             state.block_comment = true;
             continue;
         }
@@ -254,16 +273,12 @@ fn code(lang: Lang, line: &str, state: &mut State) -> Vec<Span<'static>> {
                 (_, None) => c == '"',
             };
             if is_string {
-                flush(&mut plain, &mut out);
                 let mut end = i + 1;
                 while end < chars.len() && chars[end] != c {
                     end += if chars[end] == '\\' { 2 } else { 1 };
                 }
                 let end = (end + 1).min(chars.len());
-                out.push(Span::styled(
-                    chars[i..end].iter().collect::<String>(),
-                    style_string(),
-                ));
+                emit(Token::Str, i, end);
                 i = end;
                 continue;
             }
@@ -273,17 +288,13 @@ fn code(lang: Lang, line: &str, state: &mut State) -> Vec<Span<'static>> {
                 .last()
                 .is_some_and(|p| p.is_alphanumeric() || *p == '_')
         {
-            flush(&mut plain, &mut out);
             let start = i;
             while i < chars.len()
                 && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_')
             {
                 i += 1;
             }
-            out.push(Span::styled(
-                chars[start..i].iter().collect::<String>(),
-                style_number(),
-            ));
+            emit(Token::Number, start, i);
             continue;
         }
         if c.is_alphabetic() || c == '_' {
@@ -291,33 +302,57 @@ fn code(lang: Lang, line: &str, state: &mut State) -> Vec<Span<'static>> {
             while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
                 i += 1;
             }
-            let word: String = chars[start..i].iter().collect();
-            let style = if KEYWORDS.contains(&word.as_str()) {
-                Some(style_keyword())
-            } else if word.chars().next().is_some_and(char::is_uppercase) && word.len() > 1 {
-                Some(style_type())
-            } else {
-                None
-            };
-            match style {
-                Some(style) => {
-                    flush(&mut plain, &mut out);
-                    out.push(Span::styled(word, style));
-                }
-                None => plain.push_str(&word),
-            }
+            emit(Token::Word, start, i);
             continue;
         }
-        plain.push(c);
+        emit(Token::Other, i, i + 1);
         i += 1;
     }
-    flush(&mut plain, &mut out);
+}
+
+fn code(lang: Lang, line: &str, state: &mut State) -> Vec<Span<'static>> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out: Vec<Span<'static>> = Vec::new();
+    let mut plain = String::new();
+    scan(lang, &chars, state, |token, start, end| {
+        let text: String = chars[start..end].iter().collect();
+        let style = match token {
+            Token::Comment => Some(style_comment()),
+            Token::Str => Some(style_string()),
+            Token::Number => Some(style_number()),
+            Token::Word if KEYWORDS.contains(&text.as_str()) => Some(style_keyword()),
+            Token::Word
+                if text.chars().next().is_some_and(char::is_uppercase) && text.len() > 1 =>
+            {
+                Some(style_type())
+            }
+            Token::Word | Token::Other => None,
+        };
+        match style {
+            Some(style) => {
+                if !plain.is_empty() {
+                    out.push(Span::styled(std::mem::take(&mut plain), style_plain()));
+                }
+                out.push(Span::styled(text, style));
+            }
+            None => plain.push_str(&text),
+        }
+    });
+    if !plain.is_empty() {
+        out.push(Span::styled(plain, style_plain()));
+    }
     out
+}
+
+/// A Markdown code fence line (```` ``` ```` or `~~~`), which opens or closes a code block.
+fn is_fence(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
 }
 
 fn markdown(line: &str, state: &mut State) -> Vec<Span<'static>> {
     let trimmed = line.trim_start();
-    if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+    if is_fence(line) {
         state.fence = !state.fence;
         return vec![Span::styled(line.to_string(), style_comment())];
     }
@@ -463,6 +498,32 @@ mod tests {
         let spans = line_spans(Lang::CLike, line, &mut state);
         assert_eq!(text_of(&spans), line);
         assert!(spans.iter().any(|s| s.content == "'z'"));
+    }
+
+    #[test]
+    fn state_after_matches_highlighting_line_by_line() {
+        let lines = [
+            "let s = \"/* not a comment\";",
+            "a /* opens",
+            "still inside \"*/\" closes here",
+            "// /* line comment, does not open",
+            "x = 1; /* one */ /* two",
+            "*/",
+            "'/' /* c",
+        ];
+        for lang in [Lang::CLike, Lang::Hash, Lang::Markdown] {
+            let mut state = State::default();
+            for n in 0..=lines.len() {
+                assert_eq!(
+                    state_after(lang, lines[..n].iter().copied()),
+                    state,
+                    "{lang:?} after {n} lines"
+                );
+                if let Some(line) = lines.get(n) {
+                    line_spans(lang, line, &mut state);
+                }
+            }
+        }
     }
 
     #[test]
