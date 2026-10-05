@@ -1,6 +1,6 @@
 //! Times `list_dir` and the child count pass on a folder:
 //! `cargo run --release -p liman-core --example listbench -- DIR`
-use liman_core::{ListOptions, list_dir, listing::count_children};
+use liman_core::{ListOptions, list_dir, listing::folder_summary};
 use std::time::Instant;
 
 fn main() {
@@ -13,7 +13,7 @@ fn main() {
     let counted = entries
         .iter()
         .filter(|e| e.is_dir)
-        .filter_map(|e| count_children(&e.path, ListOptions::default()))
+        .filter_map(|e| folder_summary(&e.path, ListOptions::default()))
         .count();
     println!(
         "{} entries listed in {:?}; {counted} folders counted in {:?}",

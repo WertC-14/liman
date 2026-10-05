@@ -310,7 +310,7 @@ fn render_menu(frame: &mut Frame, app: &mut App) {
         return;
     };
     const ROWS: usize = 14;
-    let (list, area) = if let Some(query) = &menu.query {
+    let list = if let Some(query) = &menu.query {
         let inner = popup(
             frame,
             tr(" Commands · type to search · Enter run · Esc close "),
@@ -326,13 +326,12 @@ fn render_menu(frame: &mut Frame, app: &mut App) {
             ])),
             input,
         );
-        let list = Rect::new(
+        Rect::new(
             inner.x + 1,
             inner.y + 3,
             inner.width.saturating_sub(2),
             ROWS as u16,
-        );
-        (list, inner)
+        )
     } else {
         let screen = frame.area();
         let (w, h) = (40, menu.items.len() as u16 + 2);
@@ -343,9 +342,8 @@ fn render_menu(frame: &mut Frame, app: &mut App) {
         let block = panel("", true);
         let inner = block.inner(rect);
         frame.render_widget(block, rect);
-        (inner, inner)
+        inner
     };
-    let _ = area;
     // Keep the selection in view.
     let visible = usize::from(list.height);
     if menu.selected < menu.offset {

@@ -51,7 +51,7 @@ fn entry_with(path: PathBuf, name: String, is_symlink: bool) -> Entry {
         } else {
             meta.as_ref().map_or(0, |m| m.len())
         },
-        // Counted later by `count_children` on a worker, so a folder with many subfolders (or a
+        // Counted later by `folder_summary` on a worker, so a folder with many subfolders (or a
         // slow mount) shows its list at once.
         item_count: None,
         contents: None,
@@ -62,11 +62,6 @@ fn entry_with(path: PathBuf, name: String, is_symlink: bool) -> Entry {
         is_symlink,
         special: None,
     }
-}
-
-/// Number of (visible) children of `dir`: one `read_dir`, not recursive. `None` if unreadable.
-pub fn count_children(dir: &Path, opts: ListOptions) -> Option<usize> {
-    folder_summary(dir, opts).map(|(count, _)| count)
 }
 
 /// Number of (visible) children and the type most of its files have, if one type is at least
@@ -153,7 +148,7 @@ mod tests {
         assert_eq!(names, ["Music", "a2.pdf", "a10.pdf", "b.txt"]);
         assert_eq!(entries[0].item_count, None); // counted separately
         assert_eq!(
-            count_children(&entries[0].path, ListOptions::default()),
+            folder_summary(&entries[0].path, ListOptions::default()).map(|(n, _)| n),
             Some(1)
         );
         assert_eq!(entries[0].file_type, FileType::Folder);
@@ -162,7 +157,7 @@ mod tests {
         let all = list_dir(&dir, ListOptions { show_hidden: true }).unwrap();
         assert_eq!(all.len(), 5);
         assert_eq!(
-            count_children(&all[0].path, ListOptions { show_hidden: true }),
+            folder_summary(&all[0].path, ListOptions { show_hidden: true }).map(|(n, _)| n),
             Some(2)
         );
 

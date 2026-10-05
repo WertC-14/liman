@@ -87,12 +87,7 @@ static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 
 impl Terminal {
     /// Starts the user's shell (`$SHELL`, else `/bin/sh`) in `cwd` with a `rows`×`cols` screen.
-    pub fn spawn(
-        cwd: &Path,
-        rows: u16,
-        cols: u16,
-        tx: Sender<AppEvent>,
-    ) -> anyhow_lite::Result<Self> {
+    pub fn spawn(cwd: &Path, rows: u16, cols: u16, tx: Sender<AppEvent>) -> Result<Self, String> {
         let shell = std::env::var("SHELL")
             .ok()
             .filter(|s| !s.is_empty())
@@ -106,20 +101,20 @@ impl Terminal {
         rows: u16,
         cols: u16,
         tx: Sender<AppEvent>,
-    ) -> anyhow_lite::Result<Self> {
+    ) -> Result<Self, String> {
         let (rows, cols) = (rows.max(2), cols.max(10));
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let pair = native_pty_system()
             .openpty(pty_size(rows, cols))
-            .map_err(anyhow_lite::from)?;
+            .map_err(|e| e.to_string())?;
         let mut cmd = CommandBuilder::new(shell);
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
-        let child = pair.slave.spawn_command(cmd).map_err(anyhow_lite::from)?;
+        let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
         drop(pair.slave); // the child holds its own copy; dropping ours lets EOF arrive when it exits
 
-        let mut reader = pair.master.try_clone_reader().map_err(anyhow_lite::from)?;
-        let writer = pair.master.take_writer().map_err(anyhow_lite::from)?;
+        let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         // The reader pings the quiet watcher after every chunk of output.
         let (ping, pings) = std::sync::mpsc::channel::<()>();
         let reader_tx = tx.clone();
@@ -517,15 +512,6 @@ pub fn key_bytes(key: KeyEvent, app_cursor: bool) -> Option<Vec<u8>> {
         bytes.insert(0, 0x1b);
     }
     Some(bytes)
-}
-
-/// Tiny error type so callers get a readable message without pulling in `anyhow` ourselves.
-pub mod anyhow_lite {
-    pub type Result<T> = std::result::Result<T, String>;
-
-    pub fn from<E: std::fmt::Display>(e: E) -> String {
-        e.to_string()
-    }
 }
 
 #[cfg(test)]

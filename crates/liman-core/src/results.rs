@@ -99,43 +99,6 @@ pub fn entries_for(paths: &[PathBuf], base: &Path) -> Vec<Entry> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ops::test_dir;
-    use std::fs;
-
-    #[test]
-    fn strips_colors_titles_and_carriage_returns() {
-        let raw = b"\x1b]0;fish\x07\x1b[1;34m./src\x1b[0m\r\n./a.txt\r\n\x1b[?2004h";
-        assert_eq!(strip_ansi(raw), "./src\n./a.txt\n");
-    }
-
-    #[test]
-    fn keeps_existing_paths_from_find_and_grep_output() {
-        let dir = test_dir("results");
-        fs::create_dir_all(dir.join("src")).unwrap();
-        fs::write(dir.join("src/main.rs"), "fn main() {}").unwrap();
-        fs::write(dir.join("a.txt"), "x").unwrap();
-        let output = format!(
-            "❯ find . -name '*.rs'\n./src/main.rs\nfind: ‘./secret’: Permission denied\n\
-             a.txt\n{}/a.txt\nsrc/main.rs:1:fn main() {{}}\nnot a path\n❯ ",
-            dir.display()
-        );
-        let paths = paths_from_output(&output, &dir);
-        assert_eq!(paths, [dir.join("src/main.rs"), dir.join("a.txt")]);
-
-        // A prompt line with the current folder (or a parent) is not a result.
-        let prompt = format!("{}\n{}\n", dir.display(), dir.parent().unwrap().display());
-        assert!(paths_from_output(&prompt, &dir).is_empty());
-
-        let entries = entries_for(&paths, &dir);
-        assert_eq!(entries[0].name, "src/main.rs");
-        assert_eq!(entries[1].size, 1);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-}
-
 /// Files and folders under `root` whose name contains `needle` (case-insensitive), breadth-first so
 /// near matches come first. Symlinked folders are not entered. Stops at [`MAX_RESULTS`] or when
 /// `cancelled()` returns true (a newer search or another folder was opened).
@@ -176,10 +139,40 @@ pub fn search_names(
 }
 
 #[cfg(test)]
-mod search_tests {
+mod tests {
     use super::*;
     use crate::ops::test_dir;
     use std::fs;
+
+    #[test]
+    fn strips_colors_titles_and_carriage_returns() {
+        let raw = b"\x1b]0;fish\x07\x1b[1;34m./src\x1b[0m\r\n./a.txt\r\n\x1b[?2004h";
+        assert_eq!(strip_ansi(raw), "./src\n./a.txt\n");
+    }
+
+    #[test]
+    fn keeps_existing_paths_from_find_and_grep_output() {
+        let dir = test_dir("results");
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(dir.join("a.txt"), "x").unwrap();
+        let output = format!(
+            "❯ find . -name '*.rs'\n./src/main.rs\nfind: ‘./secret’: Permission denied\n\
+             a.txt\n{}/a.txt\nsrc/main.rs:1:fn main() {{}}\nnot a path\n❯ ",
+            dir.display()
+        );
+        let paths = paths_from_output(&output, &dir);
+        assert_eq!(paths, [dir.join("src/main.rs"), dir.join("a.txt")]);
+
+        // A prompt line with the current folder (or a parent) is not a result.
+        let prompt = format!("{}\n{}\n", dir.display(), dir.parent().unwrap().display());
+        assert!(paths_from_output(&prompt, &dir).is_empty());
+
+        let entries = entries_for(&paths, &dir);
+        assert_eq!(entries[0].name, "src/main.rs");
+        assert_eq!(entries[1].size, 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn finds_names_in_subfolders_breadth_first() {

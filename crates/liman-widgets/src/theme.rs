@@ -1,5 +1,5 @@
 //! Color themes. One palette for everything, so the three views (ADR 0003), the panels and the
-//! terminal stay consistent. `t` cycles the themes at run time; the choice is saved in the config.
+//! terminal stay consistent. `t` opens the theme list (live preview); the choice is saved in the config.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -256,13 +256,6 @@ pub fn current_index() -> usize {
 
 pub fn set_index(index: usize) {
     CURRENT.store(index % THEMES.len(), Ordering::Relaxed);
-}
-
-/// Switches to the next theme and returns its name.
-pub fn cycle() -> &'static str {
-    let next = (CURRENT.load(Ordering::Relaxed) + 1) % THEMES.len();
-    CURRENT.store(next, Ordering::Relaxed);
-    THEMES[next].name
 }
 
 pub fn bg() -> Color {

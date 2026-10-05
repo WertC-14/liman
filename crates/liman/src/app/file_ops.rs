@@ -169,7 +169,8 @@ impl App {
         } else {
             Job::Batch(vec![Job::Trash { paths: replaced }, paste])
         };
-        if self.start_job(job, label) && clip_is_cut(&self.clipboard) {
+        let cut = clip.mode == ClipMode::Cut;
+        if self.start_job(job, label) && cut {
             self.clipboard = None; // cut items can be pasted once
         }
     }
@@ -338,10 +339,6 @@ impl App {
             self.refresh();
         }
     }
-}
-
-fn clip_is_cut(clipboard: &Option<Clipboard>) -> bool {
-    clipboard.as_ref().is_some_and(|c| c.mode == ClipMode::Cut)
 }
 
 #[cfg(test)]

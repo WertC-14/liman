@@ -42,9 +42,7 @@ impl Tui {
         execute!(stdout(), EndSynchronizedUpdate)?;
         result
     }
-}
 
-impl Tui {
     /// Gives the terminal back (normal screen, cooked mode) so another program can use it.
     pub fn suspend(&mut self) -> io::Result<()> {
         execute!(stdout(), DisableMouseCapture)?;

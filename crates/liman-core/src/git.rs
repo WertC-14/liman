@@ -92,7 +92,7 @@ pub fn parse_status(raw: &[u8], root: &Path) -> GitStatus {
         root: root.to_path_buf(),
         ..Default::default()
     };
-    let mut fields = text.split('\0').peekable();
+    let mut fields = text.split('\0');
     while let Some(record) = fields.next() {
         let mut parts = record.splitn(2, ' ');
         let (kind, rest) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
@@ -121,7 +121,8 @@ pub fn parse_status(raw: &[u8], root: &Path) -> GitStatus {
                     "2" => 8,
                     _ => 9,
                 };
-                let xy: Vec<char> = rest.chars().take(2).collect();
+                let mut xy = rest.chars();
+                let (index, worktree) = (xy.next().unwrap_or(' '), xy.next().unwrap_or(' '));
                 let path = rest.splitn(skip + 1, ' ').nth(skip).unwrap_or("");
                 if kind == "2" {
                     fields.next(); // the original path of a rename
@@ -129,10 +130,7 @@ pub fn parse_status(raw: &[u8], root: &Path) -> GitStatus {
                 let mark = if kind == "u" {
                     GitMark::CONFLICT
                 } else {
-                    GitMark {
-                        index: xy[0],
-                        worktree: xy[1],
-                    }
+                    GitMark { index, worktree }
                 };
                 st.add(path, mark);
             }
