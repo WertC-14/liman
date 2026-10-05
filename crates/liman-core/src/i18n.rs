@@ -341,6 +341,9 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         // status bar hints and the help window (keys, then what they do)
         "theme" => "tema",
         "keep" => "vazgeç",
+        " / Filter this folder: " => " / Bu klasörü süz: ",
+        " · {} of {}" => " · {} / {}",
+        "Search subfolders too" => "Alt klasörlerde de ara",
         "“{}” is protected: it cannot be removed or moved" => {
             "“{}” korunuyor: silinemez, taşınamaz"
         }

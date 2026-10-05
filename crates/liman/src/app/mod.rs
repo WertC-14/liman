@@ -618,6 +618,14 @@ impl App {
                 f.pop();
                 self.set_filter(f);
             }
+            // The same text, searched in the subfolders too (Ctrl+F).
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let text = std::mem::take(&mut self.tab.filter);
+                self.filter_editing = false;
+                self.set_filter(String::new());
+                self.search_input = Some(text);
+                self.search_live();
+            }
             // Arrows still move the selection while typing.
             KeyCode::Down => self.move_selection(1),
             KeyCode::Up => self.move_selection(-1),
@@ -2565,6 +2573,21 @@ mod tests {
             Sidebar::dir_row(app.sidebar.len(), a - 1)
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ctrl_f_in_the_filter_searches_the_same_text_below() {
+        let (mut app, _rx) = app();
+        app.handle(key(KeyCode::Char('/')));
+        app.handle(key(KeyCode::Char('r')));
+        assert_eq!(app.entry_count(), Some(2)); // Projects, c.rs
+        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Char('f'),
+            KeyModifiers::CONTROL,
+        ))));
+        assert!(!app.filter_editing && app.tab.filter.is_empty());
+        assert_eq!(app.search_input.as_deref(), Some("r"));
+        assert!(app.tab.results.as_ref().is_some_and(|r| r.running));
     }
 
     #[test]

@@ -886,7 +886,11 @@ const HINTS: &[(&str, &str)] = &[
     ("Ctrl+P", "Commands"),
     ("q", "Quit"),
 ];
-const FILTER_HINTS: &[(&str, &str)] = &[("Enter", "Keep filter"), ("Esc", "Clear")];
+const FILTER_HINTS: &[(&str, &str)] = &[
+    ("Enter", "Keep filter"),
+    ("Esc", "Clear"),
+    ("Ctrl+F", "Search subfolders too"),
+];
 const PREVIEW_HINTS: &[(&str, &str)] = &[
     ("↑↓ PgUp/PgDn", "Scroll"),
     ("g/G", "Start / end"),
@@ -964,21 +968,24 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         };
         spans.push(Span::raw(text).fg(theme::fg()).bold());
     }
-    if app.filter_editing || !app.tab.filter.is_empty() {
-        spans.push(
-            Span::raw(format!(" /{}", app.tab.filter))
-                .fg(theme::fg())
-                .bold(),
-        );
+    // Left: what you are looking at; right: a few keys (cardea style). On a narrow screen the
+    // keys go first, the information stays.
+    let filtering = app.filter_editing || !app.tab.filter.is_empty();
+    if filtering {
+        // Say what the filter does: it hides names in this folder (Ctrl+F searches below).
+        spans.push(Span::raw(tr(" / Filter this folder: ")).fg(theme::dim()));
+        spans.push(Span::raw(app.tab.filter.clone()).fg(theme::fg()).bold());
         if app.filter_editing {
             spans.push(Span::raw("▏").fg(theme::fg()));
         }
-        spans.push(Span::raw("  "));
     }
-    // Left: what you are looking at; right: a few keys (cardea style). On a narrow screen the
-    // keys go first, the information stays.
-    if let Some(count) = app.entry_count() {
-        spans.push(Span::raw(format!(" {}", format::items(count))).fg(theme::fg()));
+    if let (Some(shown), Listing::Ready(all)) = (app.entry_count(), &app.tab.listing) {
+        let text = if filtering {
+            trf(" · {} of {}", &[&shown, &format::items(all.len())])
+        } else {
+            format!(" {}", format::items(shown))
+        };
+        spans.push(Span::raw(text).fg(theme::fg()));
     }
     if let Some(entry) = app.selected_entry() {
         spans.push(Span::raw(trf(" · “{}”", &[&entry.name])).fg(theme::dim()));
