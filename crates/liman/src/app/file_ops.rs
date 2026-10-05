@@ -240,9 +240,14 @@ impl App {
 
     pub(super) fn begin_rename(&mut self) {
         if let Some(entry) = self.selected_entry() {
+            // The file name, not `entry.name`: in a results view that is a path like `src/a.rs`.
+            let text = entry
+                .path
+                .file_name()
+                .map_or_else(|| entry.name.clone(), |n| n.to_string_lossy().into_owned());
             self.rename = Some(RenameInput {
                 path: entry.path.clone(),
-                text: entry.name.clone(),
+                text,
             });
         }
     }

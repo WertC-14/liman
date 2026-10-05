@@ -2233,6 +2233,22 @@ mod tests {
     }
 
     #[test]
+    fn rename_in_a_results_view_starts_from_the_file_name() {
+        let (mut app, _rx) = app();
+        let generation = app.generation;
+        let mut found = entry("a.rs", false);
+        found.name = "src/a.rs".into();
+        found.path = PathBuf::from("/data/src/a.rs");
+        app.handle(AppEvent::Listing {
+            generation,
+            path: PathBuf::from("/data"),
+            result: Ok(vec![found]),
+        });
+        app.handle(key(KeyCode::F(2)));
+        assert_eq!(app.rename.as_ref().map(|r| r.text.as_str()), Some("a.rs"));
+    }
+
+    #[test]
     fn stale_results_are_ignored() {
         let (mut app, _rx) = app();
         app.load(PathBuf::from("/"));
