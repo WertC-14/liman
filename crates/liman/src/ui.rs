@@ -408,6 +408,8 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Shift+Del", "delete for good (asks first)"),
     ("Ctrl+T / Ctrl+W", "new tab / close tab"),
     ("Alt+1…9 / wheel on the tabs", "go to tab"),
+    ("middle click on a folder", "open it in a new tab"),
+    ("middle click on a tab", "close the tab"),
     ("F3", "preview panel"),
     ("r", "read the file full screen"),
     ("F4 / Ctrl+O", "terminal panel / full screen"),

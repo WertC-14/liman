@@ -132,6 +132,18 @@ impl App {
         self.unpark(fresh);
     }
 
+    /// Middle click on a folder: a new tab for it next to this one, in the background (like a
+    /// browser link), so the user stays where they are.
+    pub(super) fn open_in_background_tab(&mut self, path: PathBuf) {
+        if self.tabs.slots.is_empty() {
+            self.tabs.slots.push(None);
+        }
+        let at = self.tabs.active;
+        self.tabs.slots.insert(at + 1, Some(TabState::fresh(path)));
+        self.message = Some(tr("Opened in a new tab (Alt+2… or the wheel on the tabs)").into());
+        self.dirty = true;
+    }
+
     /// Ctrl+W: closes this tab (its shell ends with it). The last tab stays.
     pub(super) fn close_tab(&mut self) {
         if self.tabs.count() < 2 {
@@ -367,5 +379,26 @@ mod tests {
         assert_eq!(app.cwd, dir);
         assert!(app.tab_labels().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod middle_click_tests {
+    use crate::app::App;
+    use liman_core::Places;
+    use std::path::PathBuf;
+    use std::sync::mpsc;
+
+    #[test]
+    fn a_background_tab_waits_next_to_the_current_one() {
+        let (tx, _rx) = mpsc::channel();
+        let dir = std::env::temp_dir();
+        let mut app = App::new(dir.clone(), Places::from_user_dirs("", &dir), tx);
+        app.open_in_background_tab(PathBuf::from("/usr"));
+        let labels = app.tab_labels();
+        assert_eq!(labels.len(), 2);
+        assert!(labels[0].active, "the user stays in the first tab");
+        assert_eq!(labels[1].title, "usr");
+        assert_eq!(app.cwd, dir);
     }
 }

@@ -710,6 +710,28 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.on_click(mouse.column, mouse.row, mouse.modifiers)
             }
+            // Middle click on a folder (list or Places): open it in a new background tab.
+            MouseEventKind::Down(MouseButton::Middle) => {
+                let folder = self
+                    .entry_at(mouse.column, mouse.row)
+                    .and_then(|i| self.visible_entry(i))
+                    .filter(|e| e.is_dir)
+                    .map(|e| e.path.clone())
+                    .or_else(|| {
+                        Sidebar::row_at(
+                            self.sidebar_area,
+                            self.sidebar.len(),
+                            mouse.column,
+                            mouse.row,
+                        )
+                        .map(|i| &self.sidebar[i])
+                        .filter(|p| p.kind != liman_core::SpecialDir::Recent)
+                        .map(|p| p.path.clone())
+                    });
+                if let Some(path) = folder {
+                    self.open_in_background_tab(path);
+                }
+            }
             MouseEventKind::Down(MouseButton::Right) => {
                 self.open_context_menu(mouse.column, mouse.row)
             }

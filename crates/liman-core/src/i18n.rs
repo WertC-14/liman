@@ -194,6 +194,13 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "This is the last tab (q quits)" => "Bu son sekme (q çıkar)",
         "new tab / close tab" => "yeni sekme / sekmeyi kapat",
         "go to tab" => "sekmeye geç",
+        "Opened in a new tab (Alt+2… or the wheel on the tabs)" => {
+            "Yeni sekmede açıldı (Alt+2… ya da sekmelerde tekerlek)"
+        }
+        "middle click on a folder" => "klasöre orta tık",
+        "open it in a new tab" => "yeni sekmede aç",
+        "middle click on a tab" => "sekmeye orta tık",
+        "close the tab" => "sekmeyi kapat",
         "Alt+1…9 / wheel on the tabs" => "Alt+1…9 / sekmelerde tekerlek",
         "Terminal panel" => "Terminal paneli",
         "Terminal full screen" => "Terminal tam ekran",
