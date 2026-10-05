@@ -26,13 +26,47 @@ use crate::rows::Rows;
 use crate::theme;
 
 const COLUMN_SPACING: u16 = 2;
-/// Detailed view: Type (with the git letters in front) first, then Name, Size, Modified.
-const DETAILED_WIDTHS: [Constraint; 4] = [
-    Constraint::Length(17),
-    Constraint::Fill(1),
-    Constraint::Length(12),
-    Constraint::Length(16),
+/// Detailed view columns, in order: Type (with the git letters in front), Name, Size, Modified.
+const DETAILED_ALL: [SortKey; 4] = [
+    SortKey::Type,
+    SortKey::Name,
+    SortKey::Size,
+    SortKey::Modified,
 ];
+/// The name keeps at least this many cells; narrower panels drop Modified, then Type.
+const NAME_MIN: u16 = 24;
+
+fn detailed_width(key: SortKey) -> Constraint {
+    match key {
+        SortKey::Type => Constraint::Length(17),
+        SortKey::Name => Constraint::Fill(1),
+        SortKey::Size => Constraint::Length(12),
+        SortKey::Modified => Constraint::Length(16),
+    }
+}
+
+/// The detailed columns that fit `width` while the name keeps `NAME_MIN` cells.
+fn detailed_columns(width: u16) -> Vec<SortKey> {
+    let fits = |cols: &[SortKey]| {
+        let fixed: u16 = cols
+            .iter()
+            .map(|k| match detailed_width(*k) {
+                Constraint::Length(n) => n,
+                _ => 0,
+            })
+            .sum();
+        fixed + COLUMN_SPACING * (cols.len() as u16 - 1) + NAME_MIN <= width
+    };
+    [
+        &DETAILED_ALL[..],
+        &[SortKey::Type, SortKey::Name, SortKey::Size],
+        &[SortKey::Name, SortKey::Size],
+    ]
+    .into_iter()
+    .find(|cols| fits(cols))
+    .unwrap_or(&[SortKey::Name, SortKey::Size])
+    .to_vec()
+}
 
 /// Rows taken by the header line and the blank line under it.
 pub const HEADER_HEIGHT: u16 = 2;
@@ -100,21 +134,15 @@ impl<'a> FileList<'a> {
         {
             return None;
         }
-        let rects = Layout::horizontal(DETAILED_WIDTHS)
+        let columns = detailed_columns(area.width);
+        let rects = Layout::horizontal(columns.iter().map(|k| detailed_width(*k)))
             .flex(Flex::Start)
             .spacing(COLUMN_SPACING)
             .split(Rect::new(area.x, 0, area.width, 1));
         let i = rects
             .iter()
             .position(|r| column >= r.x && column < r.right())?;
-        [
-            SortKey::Type,
-            SortKey::Name,
-            SortKey::Size,
-            SortKey::Modified,
-        ]
-        .get(i)
-        .copied()
+        columns.get(i).copied()
     }
 
     /// Entries whose path is in `marked` get a check mark and a tinted background.
@@ -144,11 +172,12 @@ impl<'a> FileList<'a> {
         (inside && !on_gap).then(|| offset + usize::from(line / height))
     }
 
-    fn row(&self, entry: &Entry) -> Row<'static> {
+    fn row(&self, entry: &Entry, columns: &[SortKey]) -> Row<'static> {
         let is_marked = self.marked.is_some_and(|m| m.contains(&entry.path));
         let mut name = Vec::new();
-        // Detailed: git letters live in the Type column; Normal has no Type column.
-        if let (Some(marks), ListMode::Normal) = (self.git, self.mode) {
+        // Git letters live in the Type column; without one (Normal, narrow Detailed) before the name.
+        let type_column = self.mode == ListMode::Detailed && columns.contains(&SortKey::Type);
+        if let (Some(marks), false) = (self.git, type_column) {
             name.extend(gitmark::spans(marks.get(&entry.path).copied()));
         }
         if is_marked {
@@ -171,12 +200,17 @@ impl<'a> FileList<'a> {
             .right_aligned()
             .fg(theme::dim());
         let row = match self.mode {
-            ListMode::Detailed => Row::new([
-                Cell::from(self.type_cell(entry)),
-                Cell::from(name),
-                Cell::from(size),
-                Cell::from(modified),
-            ]),
+            ListMode::Detailed => {
+                let mut name = Some(name);
+                let mut size = Some(size);
+                let mut modified = Some(modified);
+                Row::new(columns.iter().map(|key| match key {
+                    SortKey::Type => Cell::from(self.type_cell(entry)),
+                    SortKey::Name => Cell::from(name.take().unwrap_or_default()),
+                    SortKey::Size => Cell::from(size.take().unwrap_or_default()),
+                    SortKey::Modified => Cell::from(modified.take().unwrap_or_default()),
+                }))
+            }
             ListMode::Normal => Row::new([
                 Cell::from(boxes::render(entry)),
                 Cell::from(on_label_line(name)),
@@ -228,20 +262,28 @@ impl StatefulWidget for FileList<'_> {
         let size = Cell::from(Line::from(title(tr("Size"), SortKey::Size)).right_aligned());
         let modified =
             Cell::from(Line::from(title(tr("Modified"), SortKey::Modified)).right_aligned());
-        let (header, widths) = match self.mode {
+        let columns = match self.mode {
+            ListMode::Detailed => detailed_columns(area.width),
+            ListMode::Normal => DETAILED_ALL.to_vec(),
+        };
+        let (header, widths): (Row, Vec<Constraint>) = match self.mode {
             // Detailed: no icon column, the type is written out (Folder, PDF file, ...).
-            ListMode::Detailed => (
-                Row::new([
-                    Cell::from(title(tr("Type"), SortKey::Type)),
-                    Cell::from(title(tr("Name"), SortKey::Name)),
-                    size,
-                    modified,
-                ]),
-                DETAILED_WIDTHS,
-            ),
+            ListMode::Detailed => {
+                let mut size = Some(size);
+                let mut modified = Some(modified);
+                (
+                    Row::new(columns.iter().map(|key| match key {
+                        SortKey::Type => Cell::from(title(tr("Type"), SortKey::Type)),
+                        SortKey::Name => Cell::from(title(tr("Name"), SortKey::Name)),
+                        SortKey::Size => size.take().unwrap_or_default(),
+                        SortKey::Modified => modified.take().unwrap_or_default(),
+                    })),
+                    columns.iter().map(|k| detailed_width(*k)).collect(),
+                )
+            }
             ListMode::Normal => (
                 Row::new([Cell::from(""), Cell::from(tr("Name")), size, modified]),
-                [
+                vec![
                     Constraint::Length(boxes::WIDTH),
                     Constraint::Fill(1),
                     Constraint::Length(10),
@@ -255,7 +297,7 @@ impl StatefulWidget for FileList<'_> {
         let (start, end) = visible_window(state, self.entries.len(), area, self.mode);
         let rows: Vec<_> = (start..end)
             .filter_map(|i| self.entries.get(i))
-            .map(|e| self.row(e))
+            .map(|e| self.row(e, &columns))
             .collect();
         let mut window = TableState::default().with_selected(state.selected().map(|s| s - start));
         let table = Table::new(rows, widths)
@@ -293,6 +335,20 @@ fn visible_window(
 #[cfg(test)]
 mod window_tests {
     use super::*;
+
+    #[test]
+    fn narrow_lists_drop_modified_then_type_so_names_fit() {
+        use SortKey::*;
+        assert_eq!(detailed_columns(100), [Type, Name, Size, Modified]);
+        assert_eq!(detailed_columns(61), [Type, Name, Size]);
+        assert_eq!(detailed_columns(45), [Name, Size]);
+        // The header click follows the same columns.
+        let narrow = Rect::new(0, 0, 45, 10);
+        assert_eq!(
+            FileList::sort_key_at(narrow, ListMode::Detailed, 3, 0),
+            Some(Name)
+        );
+    }
 
     #[test]
     fn header_click_finds_the_sort_column() {
