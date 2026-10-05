@@ -15,7 +15,7 @@ sürüklenir; ama SSH ve tmux içinde de çalışır ve altında gerçek bir ter
 [Gezinme](#gezinme) ·
 [Seçme](#seçme) ·
 [Dosya işlemleri](#dosya-işlemleri) ·
-[Arama ve süzme](#arama-ve-süzme) ·
+[Arama](#arama) ·
 [Önizleme ve okuyucu](#önizleme-ve-okuyucu) ·
 [Terminal](#terminal) ·
 [Sekmeler](#sekmeler) ·
@@ -45,11 +45,12 @@ liman                                                       # bulunduğun klasö
 
 1. **Sekme satırı** — yalnızca iki ya da daha çok sekme varken görünür.
 2. **Yol çubuğu** — bulunduğun klasör, her parça tıklanabilir. Sağda git deposundaysan dal ve değişiklik sayısı.
-3. **Yerler** — Ev, Son kullanılanlar, yer imleri (★), Çöp, Bilgisayar ve sistem klasörlerin (Belgeler, İndirilenler...).
+3. **Yerler** — üstte **Hızlı Erişim** (Ev, Son kullanılanlar, sistem klasörlerin, kendi sabitlediklerin ★, Çöp, Bilgisayar),
+   altta **Klasörler** ağacı.
 4. **Dosyalar** — çerçevenin başlığında klasör adı ve öğe sayısı.
 5. **Önizleme** (F3) — sağda, seçili öğenin içi.
 6. **Terminal** (F4) — altta, gerçek kabuğun.
-7. **Durum çubuğu** — öğe sayısı, seçili öğe, işaretliler, mesajlar ve en çok kullanılan tuşlar.
+7. **Durum çubuğu** — solda öğe sayısı, seçili öğe, işaretliler ve mesajlar; sağda en çok kullanılan tuşlar.
 
 Odak hangi paneldeyse onun çerçevesi mavi olur. **Tab / Shift+Tab** odağı Yerler → Dosyalar → Önizleme → Terminal arasında
 gezdirir; kapalı paneller atlanır (Tab terminali ya da önizlemeyi açmaz).
@@ -82,12 +83,18 @@ gezdirir; kapalı paneller atlanır (Tab terminali ya da önizlemeyi açmaz).
 | **Alt+↓** | seçili öğeyi aç |
 | **Ctrl+← / Ctrl+→** | geri / ileri (tarayıcıdaki gibi geçmiş) |
 | **~** | Ev klasörü |
+| **Ctrl+L** | yolu yaz (**Tab** tamamlar, **Enter** gider; dosya yazarsan klasörü o dosya seçili açılır) |
 | **Home / End**, **PgUp / PgDn** | başa, sona, sayfa sayfa |
 
 - Bir klasöre geri dönünce en son seçtiğin öğe yine seçili gelir.
 - Dosya açmak: masaüstündeysen varsayılan programla açılır; SSH'deysen (ekran yoksa) `$EDITOR` ile terminalde açılır.
-- **Ctrl+D** bulunduğun klasörü yer imlerine ekler (Yerler'de ★), tekrar basınca çıkarır. **Son kullanılanlar**, liman'dan
-  açtığın dosyaların listesidir.
+- **Klasörler ağacı** yalnızca bulunduğun yeri gösterir: köke giden yol ve bulunduğun klasör açıktır, öbür dallar kapanır.
+  **▸ / ▾**'ye tıklamak dalı açar/kapar, ada tıklamak o klasöre gider. Yerler odaktayken **→** açar, **←** kapatır, **Enter** gider.
+- **Hızlı Erişim'e kendi dosya ve klasörlerini ekle:** **Ctrl+D** seçili öğeyi sabitler (★), tekrar basınca çıkarır; listeden
+  bir öğeyi **HIZLI ERİŞİM** başlığının üstüne sürüklemek de sabitler. Sabitlenen dosyaya tıklamak onu açar. Yerler'de seçiliyken
+  **Del** çıkarır. **Son kullanılanlar**, GNOME/GTK programlarının son açtığın dosyalar listesidir.
+
+  ![Ctrl+L ile yol yazma](img/18-yol-yaz.png)
 
 ## Seçme
 
@@ -113,41 +120,48 @@ Alt+Enter işaretlilerin hepsine uygulanır; hiçbiri işaretli değilse imlecin
 | sürükle-bırak | klasörün ya da Yerler'deki bir yerin üstüne bırak: taşır; **Ctrl** basılıysa kopyalar |
 | **F2** | yeniden adlandır |
 | **Ctrl+N** | yeni klasör (hemen adını yazdırır) |
-| **Del** | çöpe at (geri alınabilir) |
+| **Del** | çöpe at (önce sorar; **y** onaylar, Ctrl+Z geri alır) |
 | **Shift+Del** | kalıcı sil (önce sorar) |
 | **Ctrl+Z** | son işlemi geri al (kopyalama, taşıma, yeniden adlandırma, çöpe atma...) |
 | **Alt+C** | yolu panoya kopyala (SSH üstünden de, terminalin panosuna) |
 
+- **Korunan klasörler:** `/`, ev klasörün ve üstü, sistem klasörleri (Masaüstü, Belgeler, İndirilenler...) ve Çöp çöpe atılamaz,
+  silinemez, taşınamaz, adı değiştirilemez. Yerler'deki **Çöp**'e sürüklemek de onaylı çöpe atmaktır.
+
+  ![Çöpe atmadan önce sorar](img/21-cop-onay.png)
 - Yapıştırırken aynı adda dosya varsa sorar: **b** ikisini de tut (Enter), **r** üzerine yaz (eskisi çöpe), **s** atla.
 
   ![Çakışma diyaloğu](img/06-cakisma.png)
 - Uzun işlemlerde durum çubuğunda yüzde görünür; işlem bitene kadar ikinci bir işlem başlatılmaz.
 - Başka bir program (ya da terminalde `touch`, `rm`) klasörü değiştirirse liste kendiliğinden güncellenir.
 
-## Arama ve süzme
+## Arama
 
-- **/** ile yazmaya başla: bu klasördeki adlar süzülür. **Enter** süzgeci tutar, **Esc** temizler.
-- **Ctrl+F**: bu klasörde ve **altındaki tüm klasörlerde** ada göre arar, sonuçları bir liste olarak gösterir.
-  Yol çubuğunda `⌕ arama "…" · 12 öğe bulundu` yazar; **Bksp / Esc** klasöre geri döner.
+- **Ctrl+F**: bu klasörde ve **altındaki tüm klasörlerde** ada göre arar. **Yazdıkça arar**, bulunanlar geldikçe listeye düşer
+  (yol çubuğunda "aranıyor…"). Yazarken **↑↓** sonuçlarda gezer, **Enter** sonuçlarda kalır, **Esc** klasöre döner.
+  Yol çubuğunda `⌕ arama "…" · 12 öğe bulundu` yazar; sonuçlardayken **Bksp / Esc** klasöre geri döner.
 
   ![Ctrl+F sonuçları](img/07-arama.png)
 
 ## Önizleme ve okuyucu
 
-**F3** sağda önizleme panelini açar/kapatır (hatırlanır).
+**F3** sağda önizleme panelini açar/kapatır (hatırlanır). Üstte bilgi bloğu: tür, boyut, değiştirme tarihi, izinler
+(`rw-r--r-- (644)`) ve bağsa nereyi gösterdiği.
 
 ![Önizleme paneli: kod](img/08-onizleme-kod.png)
 
 | Ne seçiliyse | Önizlemede |
 |---|---|
 | kod (rs, py, js, sh, toml...) | renkli: anahtar sözcükler, metinler, sayılar, yorumlar |
-| Markdown | başlıklar, listeler, `kod`, bağlantılar biçimli |
+| Markdown | **biçimli**: başlıklar, madde işaretleri, görev kutuları, kod blokları, kalın/eğik, bağlantılar işaretsiz (**m** kaynağa geçer) |
 | düz metin | satır numaralı, uzun satırlar alta kayar |
 | klasör | kaç öğe, hangi türden ne kadar (renkli çubuklar), içindekiler |
-| resim (png, jpg, gif, webp) | resmin kendisi, terminal hücreleriyle |
+| resim (png, jpg, gif, webp) | Kitty / Sixel / iTerm2 destekleyen terminalde **gerçek resim**, öbürlerinde terminal hücreleriyle |
+| ikili dosya | ilk 4 kB'ın hex dökümü (`xxd` gibi) |
 | PDF | metni (`pdftotext` kuruluysa) |
 | arşiv (zip, tar.gz...) | içindekiler (`unzip` / `tar` kuruluysa) |
 
+![Önizleme paneli: biçimli Markdown](img/19-markdown.png)
 ![Önizleme paneli: resim](img/17-onizleme-resim.png)
 
 - Panel açıkken **Tab** ile önizlemeye geç: **↑↓ / j k** satır, **PgUp/PgDn** ya da **Space** sayfa, **g / G** baş / son.
@@ -235,6 +249,10 @@ Yalnızca bir git deposunun içindeyken görünür.
   önizler, **Enter** seçer, **Esc** vazgeçer.
 
   ![Tema seçici](img/16-tema.png)
+- **Nerd Font ikonları:** terminal yazı tipin bir Nerd Font ise ayarlara `icons = nerd` yaz: Yerler'de, ağaçta, listede ve
+  kutularda dosya türü ikonları çıkar. Varsayılan Unicode semboller (her yazı tipinde görünür).
+
+  ![Nerd Font ikonları](img/20-nerd.png)
 - Terminal truecolor desteklemiyorsa (bazı SSH/tmux kurulumları) renkler kendiliğinden en yakın 256 renge çevrilir.
 
 ## Ayarlar
@@ -249,8 +267,10 @@ Yalnızca bir git deposunun içindeyken görünür.
 | `hidden` | `true`, `false` | **Ctrl+H** |
 | `sort` | `name`, `size`, `modified`, `type`, sonuna `-desc` | **s / S** |
 | `preview` | `true`, `false` | **F3** |
+| `icons` | `nerd`, `unicode` (varsayılan) | elle |
+| `images` | `auto` (varsayılan: terminale sorar), `halfblocks` (hep hücrelerle) | elle |
 
-Yer imleri: `~/.config/liman/bookmarks` (satır başına bir klasör).
+Hızlı Erişim'e sabitlenenler: `~/.config/liman/bookmarks` (satır başına bir yol).
 
 ## Tüm kısayollar
 
@@ -265,9 +285,9 @@ liman içinde **?** her zaman güncel listeyi gösterir.
 | Tab / Shift+Tab | Yerler · Dosyalar · Önizleme · Terminal |
 | v | küçük liste ↔ büyük görünüm |
 | + / - (Ctrl+tekerlek) | büyüt / küçült |
-| / | süz |
-| Ctrl+F | alt klasörlerde ara |
-| Ctrl+D | yer imi ekle / kaldır |
+| Ctrl+L | yolu yaz (Tab tamamlar) |
+| Ctrl+F | bu klasörde ve altında ara (yazdıkça) |
+| Ctrl+D | Hızlı Erişim'e sabitle / çıkar |
 | Ctrl+H / . | gizli dosyalar |
 | s / S (başlığa tık) | sırala / ters çevir |
 | Space / Ctrl+A | işaretle / tümünü işaretle |
@@ -276,13 +296,14 @@ liman içinde **?** her zaman güncel listeyi gösterir.
 | Shift+oklar / Home / End | aralık işaretle |
 | sürükle | taşı (Ctrl: kopyala) |
 | Ctrl+C / Ctrl+X / Ctrl+V | kopyala / kes / yapıştır |
-| Del / F2 / Ctrl+Z | çöp / yeniden adlandır / geri al |
+| Del / F2 / Ctrl+Z | çöp (sorar) / yeniden adlandır / geri al |
 | Shift+Del | kalıcı sil |
 | Ctrl+N / Alt+C | yeni klasör / yolu kopyala |
 | Ctrl+T / Ctrl+W | yeni sekme / sekmeyi kapat |
 | Alt+1…9 / sekmelerde tekerlek | sekmeye geç |
 | klasöre orta tık / sekmeye orta tık | yeni sekmede aç / sekmeyi kapat |
 | F3 / r | önizleme paneli / tam ekran oku |
+| m (önizlemede) | Markdown biçimli / kaynak |
 | F4 / Ctrl+O / F6 | terminal paneli / tam ekran / odak |
 | Ctrl+↑ / Ctrl+↓ | terminal boyu |
 | Alt+Enter | seçili yolları terminale yaz |
