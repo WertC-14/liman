@@ -130,10 +130,51 @@ pub fn spawn_git_status(tx: Sender<AppEvent>, dir: PathBuf) {
 
 /// Runs one git command (stage, commit, push, ...) and reports its output.
 pub fn spawn_git_command(tx: Sender<AppEvent>, dir: PathBuf, args: Vec<String>, label: String) {
-    thread::spawn(move || {
+    spawn_git_task(tx, label, move || {
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let result = liman_core::git::run(&dir, &refs);
+        liman_core::git::run(&dir, &refs)
+    });
+}
+
+/// Runs `task` (one or more git commands) and reports it like a single command.
+pub fn spawn_git_task(
+    tx: Sender<AppEvent>,
+    label: String,
+    task: impl FnOnce() -> Result<String, String> + Send + 'static,
+) {
+    thread::spawn(move || {
+        let result = task();
         let _ = tx.send(AppEvent::GitDone { label, result });
+    });
+}
+
+/// The git panel's diff of one file.
+pub fn spawn_git_diff(
+    tx: Sender<AppEvent>,
+    root: PathBuf,
+    path: PathBuf,
+    mark: liman_core::git::GitMark,
+) {
+    thread::spawn(move || {
+        let lines = liman_core::git::file_diff(&root, &path, mark);
+        let _ = tx.send(AppEvent::GitDiff { path, lines });
+    });
+}
+
+/// Where `p` in the git panel pushes (remote name and URL).
+pub fn spawn_git_remote(tx: Sender<AppEvent>, root: PathBuf, upstream: Option<String>) {
+    thread::spawn(move || {
+        let remote = liman_core::git::push_remote(&root, upstream.as_deref());
+        let _ = tx.send(AppEvent::GitRemote { root, remote });
+    });
+}
+
+/// Local branches for the branch picker.
+pub fn spawn_git_branches(tx: Sender<AppEvent>, root: PathBuf) {
+    thread::spawn(move || {
+        let result = liman_core::git::run(&root, &["branch", "--format=%(refname:short)"])
+            .map(|out| out.lines().map(str::to_string).collect());
+        let _ = tx.send(AppEvent::GitBranches(result));
     });
 }
 

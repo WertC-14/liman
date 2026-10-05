@@ -177,7 +177,43 @@ impl GitStatus {
     }
 }
 
-/// Runs a git command in `dir` and returns its combined output, or the error text.
+/// The git panel's text for one changed file: the diff of its unstaged changes (or of the staged
+/// ones when nothing else changed); for an untracked file its first lines, as additions.
+pub fn file_diff(root: &Path, path: &Path, mark: GitMark) -> Vec<String> {
+    let text = if mark == GitMark::UNTRACKED {
+        untracked_lines(path)
+    } else {
+        let file = path.display().to_string();
+        let mut args = vec!["diff", "--no-color"];
+        if !mark.is_unstaged() {
+            args.push("--cached");
+        }
+        args.extend(["--", file.as_str()]);
+        run(root, &args).unwrap_or_else(|e| e)
+    };
+    text.lines().map(str::to_string).collect()
+}
+
+/// Only the start of an untracked file is read (it may be a huge data file).
+const UNTRACKED_BYTES: u64 = 64 * 1024;
+const UNTRACKED_LINES: usize = 400;
+
+fn untracked_lines(path: &Path) -> String {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    let read =
+        std::fs::File::open(path).and_then(|f| f.take(UNTRACKED_BYTES).read_to_end(&mut buf));
+    if read.is_err() || buf.contains(&0) {
+        return crate::i18n::tr("(binary or unreadable)").into();
+    }
+    String::from_utf8_lossy(&buf)
+        .lines()
+        .take(UNTRACKED_LINES)
+        .map(|l| format!("+{l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The remote pushes go to: the upstream's remote, else `origin`, else the first one.
 /// Returns its name and URL.
 pub fn push_remote(dir: &Path, upstream: Option<&str>) -> Option<(String, String)> {
@@ -208,6 +244,7 @@ pub fn short_url(url: &str) -> String {
     url.replacen(':', "/", 1)
 }
 
+/// Runs a git command in `dir` and returns its combined output, or the error text.
 pub fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
     let out = git(dir, args).map_err(|e| format!("git: {e}"))?;
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -234,6 +271,24 @@ mod tests {
     }
     use crate::ops::test_dir;
     use std::fs;
+
+    #[test]
+    fn untracked_files_show_only_their_start() {
+        let dir = test_dir("git-untracked");
+        let text = dir.join("notes.txt");
+        let long: String = (0..1000).map(|i| format!("line {i}\n")).collect();
+        fs::write(&text, long).unwrap();
+        let lines = file_diff(&dir, &text, GitMark::UNTRACKED);
+        assert_eq!(lines.len(), UNTRACKED_LINES);
+        assert_eq!(lines[0], "+line 0");
+        let binary = dir.join("data.bin");
+        fs::write(&binary, [1u8, 0, 2]).unwrap();
+        assert_eq!(
+            file_diff(&dir, &binary, GitMark::UNTRACKED),
+            ["(binary or unreadable)"]
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn parses_branch_files_and_folders() {

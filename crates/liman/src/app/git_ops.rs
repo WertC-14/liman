@@ -19,8 +19,12 @@ pub struct GitPanel {
     /// Which file the diff belongs to.
     pub diff_for: Option<PathBuf>,
     pub scroll: usize,
-    /// Where `p` pushes: remote name and URL (read when the panel opens).
+    /// A diff is being built on a worker (one at a time; the newest selection wins).
+    diff_busy: bool,
+    /// Where `p` pushes: remote name and URL (read on a worker when the panel opens).
     pub remote: Option<(String, String)>,
+    /// False until the remote lookup has answered.
+    pub remote_known: bool,
 }
 
 impl App {
@@ -155,16 +159,14 @@ impl App {
         if git.upstream.is_some() {
             return self.git_command(vec!["push".into()], tr("Pushed"));
         }
-        match liman_core::git::push_remote(&git.root, None) {
-            Some((remote, _)) => self.git_command(
-                vec!["push".into(), "-u".into(), remote, "HEAD".into()],
-                tr("Pushed"),
-            ),
-            None => {
-                self.message =
-                    Some(tr("No remote yet: git remote add origin <URL> in the terminal").into())
-            }
-        }
+        // No upstream yet: find the remote and push with -u, both on the worker.
+        let root = git.root.clone();
+        let no_remote = tr("No remote yet: git remote add origin <URL> in the terminal");
+        self.message = Some(format!("{}…", tr("Pushed")));
+        worker::spawn_git_task(self.tx.clone(), tr("Pushed").into(), move || {
+            let (remote, _) = liman_core::git::push_remote(&root, None).ok_or(no_remote)?;
+            liman_core::git::run(&root, &["push", "-u", &remote, "HEAD"])
+        });
     }
 
     pub(super) fn git_pull(&mut self) {
@@ -173,22 +175,24 @@ impl App {
 
     /// `b` (git panel): local branches in a list; Enter switches.
     pub(super) fn open_branch_picker(&mut self) {
-        let Some(root) = self.git_root() else {
-            return;
-        };
-        match liman_core::git::run(&root, &["branch", "--format=%(refname:short)"]) {
-            Ok(out) => {
-                let branches: Vec<String> = out.lines().map(str::to_string).collect();
-                let current = self
-                    .git
-                    .as_ref()
-                    .map(|g| g.branch.clone())
-                    .unwrap_or_default();
-                let selected = branches.iter().position(|b| *b == current).unwrap_or(0);
+        if let Some(root) = self.git_root() {
+            worker::spawn_git_branches(self.tx.clone(), root);
+        }
+    }
+
+    pub(super) fn on_git_branches(&mut self, result: Result<Vec<String>, String>) {
+        match result {
+            Ok(branches) => {
+                let current = self.git.as_ref().map(|g| g.branch.as_str());
+                let selected = branches
+                    .iter()
+                    .position(|b| Some(b.as_str()) == current)
+                    .unwrap_or(0);
                 self.branch_picker = Some((branches, selected));
             }
             Err(e) => self.message = Some(first_line(&e)),
         }
+        self.dirty = true;
     }
 
     pub(super) fn on_branch_key(&mut self, key: KeyEvent) {
@@ -231,13 +235,15 @@ impl App {
         if self.git_panel.is_some() {
             self.git_panel = None;
         } else if let Some(git) = &self.git {
-            let remote = liman_core::git::push_remote(&git.root, git.upstream.as_deref());
+            worker::spawn_git_remote(self.tx.clone(), git.root.clone(), git.upstream.clone());
             self.git_panel = Some(GitPanel {
                 selected: 0,
                 diff: Vec::new(),
                 diff_for: None,
                 scroll: 0,
-                remote,
+                diff_busy: false,
+                remote: None,
+                remote_known: false,
             });
             self.request_git();
         } else {
@@ -301,7 +307,9 @@ impl App {
         }
     }
 
-    /// Called every frame the panel is open: loads the diff when the selected file changed.
+    /// Called every frame the panel is open: asks a worker for the diff when the selected file
+    /// changed. One diff at a time; when it arrives for a file no longer selected, the next frame
+    /// asks for the current one.
     pub fn git_panel_diff(&mut self) {
         let Some((path, mark)) = self.git_panel_file() else {
             return;
@@ -316,24 +324,36 @@ impl App {
             return;
         }
         panel.diff_for = Some(path.clone());
-        let file = path.display().to_string();
-        let diff = if mark == GitMark::UNTRACKED {
-            std::fs::read_to_string(&path)
-                .map(|t| {
-                    t.lines()
-                        .take(400)
-                        .map(|l| format!("+{l}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_else(|_| tr("(binary or unreadable)").into())
-        } else if mark.is_unstaged() {
-            liman_core::git::run(&root, &["diff", "--no-color", "--", &file]).unwrap_or_else(|e| e)
-        } else {
-            liman_core::git::run(&root, &["diff", "--cached", "--no-color", "--", &file])
-                .unwrap_or_else(|e| e)
+        if !panel.diff_busy {
+            panel.diff_busy = true;
+            worker::spawn_git_diff(self.tx.clone(), root, path, mark);
+        }
+    }
+
+    pub(super) fn on_git_diff(&mut self, path: PathBuf, lines: Vec<String>) {
+        let Some(panel) = &mut self.git_panel else {
+            return;
         };
-        panel.diff = diff.lines().map(str::to_string).collect();
+        panel.diff_busy = false;
+        if panel.diff_for.as_ref() == Some(&path) {
+            panel.diff = lines;
+        } else {
+            panel.diff_for = None; // the selection moved on: ask again on the next frame
+        }
+        self.dirty = true;
+    }
+
+    pub(super) fn on_git_remote(
+        &mut self,
+        root: &std::path::Path,
+        remote: Option<(String, String)>,
+    ) {
+        let same_repo = self.git.as_ref().is_some_and(|g| g.root == root);
+        if let (Some(panel), true) = (&mut self.git_panel, same_repo) {
+            panel.remote = remote;
+            panel.remote_known = true;
+            self.dirty = true;
+        }
     }
 }
 

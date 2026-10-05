@@ -54,6 +54,18 @@ pub enum AppEvent {
         label: String,
         result: Result<String, String>,
     },
+    /// The git panel's diff of `path` is ready.
+    GitDiff {
+        path: PathBuf,
+        lines: Vec<String>,
+    },
+    /// Where pushes from the repository at `root` go (name, URL), if anywhere.
+    GitRemote {
+        root: PathBuf,
+        remote: Option<(String, String)>,
+    },
+    /// Local branches (or the error text) for the branch picker.
+    GitBranches(Result<Vec<String>, String>),
     /// Something changed in this folder (after a short quiet period).
     FolderChanged(PathBuf),
     /// The embedded shell exited.

@@ -198,7 +198,8 @@ fn render_git_panel(frame: &mut Frame, app: &mut App) {
             tr("new branch"),
             liman_core::git::short_url(url)
         ),
-        (_, None) => format!(" · {}", tr("no remote")),
+        (_, None) if panel.remote_known => format!(" · {}", tr("no remote")),
+        (_, None) => String::new(), // still asking git
     };
     let title = format!(" Git · ⎇ {}{target} ", git.summary());
     let inner = popup(frame, &title, w, h);

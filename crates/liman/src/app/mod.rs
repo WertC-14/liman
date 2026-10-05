@@ -418,6 +418,9 @@ impl App {
             }
             AppEvent::Counts { generation, counts } => self.on_counts(generation, counts),
             AppEvent::GitDone { label, result } => self.on_git_done(label, result),
+            AppEvent::GitDiff { path, lines } => self.on_git_diff(path, lines),
+            AppEvent::GitRemote { root, remote } => self.on_git_remote(&root, remote),
+            AppEvent::GitBranches(result) => self.on_git_branches(result),
             AppEvent::Preview { key, preview } => self.on_preview(key, *preview),
             AppEvent::TermQuiet(_) => {
                 let Some(term) = &mut self.terminal else {
