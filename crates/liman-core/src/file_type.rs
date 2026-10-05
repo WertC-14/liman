@@ -56,6 +56,23 @@ impl FileType {
     }
 }
 
+/// How many items of each type, in the order the types first appeared.
+#[derive(Debug, Default)]
+pub(crate) struct Tally(Vec<(FileType, usize)>);
+
+impl Tally {
+    pub(crate) fn add(&mut self, t: FileType) {
+        match self.0.iter_mut().find(|(k, _)| *k == t) {
+            Some((_, n)) => *n += 1,
+            None => self.0.push((t, 1)),
+        }
+    }
+
+    pub(crate) fn into_vec(self) -> Vec<(FileType, usize)> {
+        self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -11,6 +11,7 @@ use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 use crate::FileType;
+use crate::file_type::Tally;
 use crate::i18n::{tr, trf};
 use crate::sort::natural_cmp;
 
@@ -157,14 +158,11 @@ fn folder(path: &Path) -> Content {
         };
         names.push((name, is_dir));
     }
-    let mut counts: Vec<(FileType, usize)> = Vec::new();
+    let mut tally = Tally::default();
     for (name, is_dir) in &names {
-        let t = FileType::from_path(Path::new(name), *is_dir);
-        match counts.iter_mut().find(|(k, _)| *k == t) {
-            Some((_, n)) => *n += 1,
-            None => counts.push((t, 1)),
-        }
+        tally.add(FileType::from_path(Path::new(name), *is_dir));
     }
+    let mut counts = tally.into_vec();
     counts.sort_by_key(|c| std::cmp::Reverse(c.1));
     names.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| natural_cmp(&a.0, &b.0)));
     let total = names.len();

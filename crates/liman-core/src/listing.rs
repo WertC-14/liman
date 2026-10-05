@@ -4,6 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::file_type::Tally;
 use crate::sort::sort_entries;
 use crate::{Entry, FileType};
 
@@ -69,7 +70,7 @@ fn entry_with(path: PathBuf, name: String, is_symlink: bool) -> Entry {
 pub fn folder_summary(dir: &Path, opts: ListOptions) -> Option<(usize, Option<FileType>)> {
     let mut count = 0;
     let mut files = 0;
-    let mut by_type: Vec<(FileType, usize)> = Vec::new();
+    let mut by_type = Tally::default();
     for item in fs::read_dir(dir).ok()?.flatten() {
         let name = item.file_name();
         let name = name.to_string_lossy();
@@ -85,12 +86,10 @@ pub fn folder_summary(dir: &Path, opts: ListOptions) -> Option<(usize, Option<Fi
         if t == FileType::Other {
             continue;
         }
-        match by_type.iter_mut().find(|(k, _)| *k == t) {
-            Some((_, n)) => *n += 1,
-            None => by_type.push((t, 1)),
-        }
+        by_type.add(t);
     }
     let dominant = by_type
+        .into_vec()
         .into_iter()
         .max_by_key(|(_, n)| *n)
         .filter(|(_, n)| *n * 2 >= files)
