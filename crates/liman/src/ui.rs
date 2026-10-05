@@ -390,7 +390,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Bksp / Alt+← / Alt+↑", "parent folder"),
     ("Alt+→ / Alt+↓", "into the folder / open"),
     ("Ctrl+← / Ctrl+→", "back / forward"),
-    ("Tab / Shift+Tab", "Places · Files · Terminal"),
+    ("Tab / Shift+Tab", "Places · Files · Preview · Terminal"),
     ("v", "small list ↔ large view"),
     ("+ / -  (Ctrl+wheel)", "zoom"),
     ("/", "filter"),

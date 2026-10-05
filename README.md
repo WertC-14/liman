@@ -13,6 +13,8 @@ Made for people who like GUI file managers but spend their day in SSH and tmux.
 - Tabs (Ctrl+T), each with its own folder and shell
 - Command palette (Ctrl+P), 8 themes, English and Turkish, 256-color fallback for terminals without truecolor
 
+Full guide (Turkish): [docs/KILAVUZ.md](docs/KILAVUZ.md).
+
 ## Install
 
 Static Linux binary (x86_64, aarch64), no dependencies on the server:

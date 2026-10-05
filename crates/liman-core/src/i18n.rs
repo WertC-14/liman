@@ -369,7 +369,7 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "parent folder" => "üst klasör",
         "back / forward" => "geri / ileri",
         "into the folder / open" => "klasöre gir / aç",
-        "Places · Files · Terminal" => "Yerler · Dosyalar · Terminal",
+        "Places · Files · Preview · Terminal" => "Yerler · Dosyalar · Önizleme · Terminal",
         "small list ↔ large view" => "küçük liste ↔ büyük görünüm",
         "+ / -  (Ctrl+wheel)" => "+ / -  (Ctrl+tekerlek)",
         "zoom" => "yakınlaştır",

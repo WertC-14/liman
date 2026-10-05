@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=liman
+GenericName=File Manager
+Comment=Terminal file manager with the feel of a GUI file manager
+Exec=kitty --class liman --title liman liman
+Icon=system-file-manager
+Terminal=false
+Categories=System;FileTools;FileManager;
+Keywords=files;folder;dosya;klasör;
