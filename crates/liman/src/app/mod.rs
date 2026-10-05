@@ -980,7 +980,9 @@ impl App {
     /// files. In the folder tree → opens a branch (or steps into it), ← closes it (or goes to the
     /// parent). Returns false for keys Places does not use (they work as usual).
     fn on_places_key(&mut self, key: KeyEvent) -> bool {
-        let row = self.sidebar_selected;
+        // The tree may have shrunk since the cursor was placed (a move closes branches).
+        let row = self.sidebar_selected.min(self.sidebar_len() - 1);
+        self.sidebar_selected = row;
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.sidebar_selected = self.sidebar_step(row, -1),
             KeyCode::Down | KeyCode::Char('j') => self.sidebar_selected = self.sidebar_step(row, 1),
@@ -2474,6 +2476,15 @@ mod tests {
             Sidebar::dir_row(app.sidebar.len(), a - 1)
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn places_cursor_past_a_shrunk_tree_still_moves() {
+        let (mut app, _rx) = app();
+        app.tab.focus = Focus::Places;
+        app.sidebar_selected = 999; // the tree was longer before
+        app.handle(key(KeyCode::Up));
+        assert!(app.sidebar_selected < app.sidebar_len() - 1);
     }
 
     #[test]

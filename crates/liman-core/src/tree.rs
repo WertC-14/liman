@@ -23,6 +23,8 @@ pub struct DirTree {
     /// Subfolders of the folders read so far, sorted.
     children: HashMap<PathBuf, Vec<PathBuf>>,
     expanded: HashSet<PathBuf>,
+    /// The folder the tree was last focused on.
+    focused: Option<PathBuf>,
     /// The flattened rows, rebuilt after every change.
     rows: Vec<TreeRow>,
 }
@@ -69,7 +71,14 @@ impl DirTree {
     /// Shows where `dir` is: the folders from its root down to `dir` itself are open, every
     /// other branch is closed (so the tree never piles up branches opened along the way).
     /// Returns the folders whose children still have to be read, top down.
+    ///
+    /// Focusing the same folder again (a reload of it) changes nothing, so branches opened by
+    /// hand stay open until the user moves.
     pub fn focus(&mut self, dir: &Path) -> Vec<PathBuf> {
+        if self.focused.as_deref() == Some(dir) {
+            return Vec::new();
+        }
+        self.focused = Some(dir.to_path_buf());
         // The deepest root that contains `dir` (home before `/`).
         let Some(root) = self
             .roots
@@ -184,6 +193,9 @@ mod tests {
         );
         // A branch opened by hand stays open until the next move.
         assert!(!tree.expand(Path::new("/home/u/Documents")));
+        assert_eq!(names(&tree)[2], "    notes");
+        // A reload of the same folder keeps the hand-opened branch.
+        assert!(tree.focus(Path::new("/home/u/Projects")).is_empty());
         assert_eq!(names(&tree)[2], "    notes");
         // Back home: everything below it closes (the user's request, LOG 2026-10-05).
         assert!(tree.focus(Path::new("/home/u")).is_empty());

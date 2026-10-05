@@ -90,6 +90,15 @@ impl App {
 
     pub(super) fn ask_git_discard(&mut self) {
         let paths = self.git_targets();
+        // New files go to the trash: never a protected folder (home, Documents, ...).
+        if let Some(path) = paths.iter().find(|p| self.is_protected(p)) {
+            let name = path.display().to_string();
+            self.message = Some(trf(
+                "“{}” is protected: it cannot be removed or moved",
+                &[&name],
+            ));
+            return;
+        }
         if !paths.is_empty() {
             self.dialog = Some(Dialog::ConfirmDiscard { paths });
         }
