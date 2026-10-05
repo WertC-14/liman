@@ -35,24 +35,24 @@ pub enum Focus {
 impl App {
     /// Keys go to the shell when the terminal is on screen and focused.
     pub(super) fn terminal_has_focus(&self) -> bool {
-        match self.term_mode {
+        match self.tab.term_mode {
             TermMode::Hidden => false,
-            TermMode::Panel => self.focus == Focus::Terminal,
+            TermMode::Panel => self.tab.focus == Focus::Terminal,
             TermMode::Fullscreen => true,
         }
     }
 
     /// F4: open the panel (and focus the shell) or close it.
     pub(super) fn toggle_panel(&mut self) {
-        match self.term_mode {
+        match self.tab.term_mode {
             TermMode::Panel => {
-                self.term_mode = TermMode::Hidden;
-                self.focus = Focus::Files;
+                self.tab.term_mode = TermMode::Hidden;
+                self.tab.focus = Focus::Files;
             }
             TermMode::Hidden | TermMode::Fullscreen => {
                 if self.ensure_terminal() {
-                    self.term_mode = TermMode::Panel;
-                    self.focus = Focus::Terminal;
+                    self.tab.term_mode = TermMode::Panel;
+                    self.tab.focus = Focus::Terminal;
                 }
             }
         }
@@ -60,13 +60,13 @@ impl App {
 
     /// Ctrl+O: the terminal full screen, or back to the files.
     pub(super) fn toggle_fullscreen(&mut self) {
-        if self.term_mode == TermMode::Fullscreen {
-            self.term_mode = self.term_before_fullscreen;
-            self.focus = Focus::Files;
+        if self.tab.term_mode == TermMode::Fullscreen {
+            self.tab.term_mode = self.tab.term_before_fullscreen;
+            self.tab.focus = Focus::Files;
         } else if self.ensure_terminal() {
-            self.term_before_fullscreen = self.term_mode;
-            self.term_mode = TermMode::Fullscreen;
-            self.focus = Focus::Terminal;
+            self.tab.term_before_fullscreen = self.tab.term_mode;
+            self.tab.term_mode = TermMode::Fullscreen;
+            self.tab.focus = Focus::Terminal;
         }
     }
 
@@ -74,9 +74,9 @@ impl App {
     pub(super) fn focus_next(&mut self) {
         self.preview.reader = false;
         // Closed panels are skipped, never opened by Tab (F3 / F4 open them).
-        let terminal = self.term_mode == TermMode::Panel;
+        let terminal = self.tab.term_mode == TermMode::Panel;
         let preview = self.preview.shown;
-        self.focus = match self.focus {
+        self.tab.focus = match self.tab.focus {
             Focus::Places => Focus::Files,
             Focus::Files if preview => Focus::Preview,
             Focus::Files | Focus::Preview if terminal => Focus::Terminal,
@@ -87,9 +87,9 @@ impl App {
     /// Shift+Tab: the other way round.
     pub(super) fn focus_prev(&mut self) {
         self.preview.reader = false;
-        let terminal = self.term_mode == TermMode::Panel;
+        let terminal = self.tab.term_mode == TermMode::Panel;
         let preview = self.preview.shown;
-        self.focus = match self.focus {
+        self.tab.focus = match self.tab.focus {
             Focus::Files => self.places_or_files(),
             Focus::Places if terminal => Focus::Terminal,
             Focus::Places | Focus::Terminal if preview => Focus::Preview,
@@ -108,7 +108,8 @@ impl App {
 
     /// In the terminal Tab completes; only on an empty command line does it move on.
     pub(super) fn terminal_line_empty(&self) -> bool {
-        self.terminal
+        self.tab
+            .terminal
             .as_ref()
             .is_some_and(|t| t.typed_text().is_empty())
     }
@@ -120,12 +121,12 @@ impl App {
         if paths.is_empty() || !self.ensure_terminal() {
             return;
         }
-        if self.term_mode == TermMode::Hidden {
-            self.term_mode = TermMode::Panel;
+        if self.tab.term_mode == TermMode::Hidden {
+            self.tab.term_mode = TermMode::Panel;
         }
-        self.focus = Focus::Terminal;
-        let term = self.terminal.as_mut().expect("ensured above");
-        let base = term.cwd().unwrap_or_else(|| self.cwd.clone());
+        self.tab.focus = Focus::Terminal;
+        let term = self.tab.terminal.as_mut().expect("ensured above");
+        let base = term.cwd().unwrap_or_else(|| self.tab.cwd.clone());
         let mut line = String::new();
         for path in &paths {
             let shown = path.strip_prefix(&base).unwrap_or(path);
@@ -133,13 +134,13 @@ impl App {
             line.push(' ');
         }
         term.type_text(&line);
-        self.marked.clear();
+        self.tab.marked.clear();
     }
 
     /// F6: move focus between the files and the panel.
     pub(super) fn switch_focus(&mut self) {
-        if self.term_mode == TermMode::Panel {
-            self.focus = match self.focus {
+        if self.tab.term_mode == TermMode::Panel {
+            self.tab.focus = match self.tab.focus {
                 Focus::Files | Focus::Places | Focus::Preview => Focus::Terminal,
                 Focus::Terminal => Focus::Files,
             };
@@ -148,14 +149,14 @@ impl App {
 
     /// Starts the shell in the current folder if it is not running. False if it cannot start.
     fn ensure_terminal(&mut self) -> bool {
-        if self.terminal.is_some() {
+        if self.tab.terminal.is_some() {
             return true;
         }
         // Real size is set by the UI on the first frame.
-        match Terminal::spawn(&self.cwd, 10, 80, self.tx.clone()) {
+        match Terminal::spawn(&self.tab.cwd, 10, 80, self.tx.clone()) {
             Ok(term) => {
-                self.last_shell_cwd = Some(self.cwd.clone());
-                self.terminal = Some(term);
+                self.tab.last_shell_cwd = Some(self.tab.cwd.clone());
+                self.tab.terminal = Some(term);
                 true
             }
             Err(e) => {
@@ -166,14 +167,14 @@ impl App {
     }
 
     pub(super) fn on_term_key(&mut self, key: KeyEvent) {
-        if let Some(term) = &mut self.terminal {
+        if let Some(term) = &mut self.tab.terminal {
             term.send_key(key);
         }
     }
 
     /// Shell output: update the screen, and follow the shell if it changed folder (`cd` typed there).
     pub(super) fn on_term_output(&mut self, bytes: &[u8]) {
-        let Some(term) = &mut self.terminal else {
+        let Some(term) = &mut self.tab.terminal else {
             return;
         };
         term.process(bytes);
@@ -188,7 +189,7 @@ impl App {
     /// Opens the shell's current folder in the view if the user changed it there (`cd`).
     pub(super) fn follow_shell_cwd(&mut self) {
         self.cwd_checked = std::time::Instant::now();
-        let Some(term) = &mut self.terminal else {
+        let Some(term) = &mut self.tab.terminal else {
             return;
         };
         if term.is_syncing() {
@@ -197,20 +198,20 @@ impl App {
         let Some(shell_cwd) = term.cwd() else {
             return;
         };
-        if self.last_shell_cwd.as_ref() == Some(&shell_cwd) {
+        if self.tab.last_shell_cwd.as_ref() == Some(&shell_cwd) {
             return;
         }
-        self.last_shell_cwd = Some(shell_cwd.clone());
-        if shell_cwd != self.cwd && self.loading_path.as_ref() != Some(&shell_cwd) {
+        self.tab.last_shell_cwd = Some(shell_cwd.clone());
+        if shell_cwd != self.tab.cwd && self.loading_path.as_ref() != Some(&shell_cwd) {
             self.load_from_shell = true;
             self.load(shell_cwd);
         }
     }
 
     pub(super) fn on_term_exited(&mut self) {
-        self.terminal = None;
-        self.term_mode = TermMode::Hidden;
-        self.focus = Focus::Files;
+        self.tab.terminal = None;
+        self.tab.term_mode = TermMode::Hidden;
+        self.tab.focus = Focus::Files;
         self.message = Some(tr("The shell exited; F4 starts a new one").into());
     }
 
@@ -219,12 +220,12 @@ impl App {
         if from_shell {
             return;
         }
-        let Some(term) = &mut self.terminal else {
+        let Some(term) = &mut self.tab.terminal else {
             return;
         };
-        if self.last_shell_cwd.as_ref() != Some(path) {
+        if self.tab.last_shell_cwd.as_ref() != Some(path) {
             term.cd(path);
-            self.last_shell_cwd = Some(path.clone());
+            self.tab.last_shell_cwd = Some(path.clone());
         }
     }
 }

@@ -33,8 +33,8 @@ impl App {
     pub(super) fn toggle_preview(&mut self) {
         self.preview.shown = !self.preview.shown;
         self.preview.reader = false;
-        if !self.preview.shown && self.focus == super::Focus::Preview {
-            self.focus = super::Focus::Files;
+        if !self.preview.shown && self.tab.focus == super::Focus::Preview {
+            self.tab.focus = super::Focus::Files;
         }
         let value = if self.preview.shown { "true" } else { "false" };
         self.save_setting("preview", value);
@@ -108,7 +108,7 @@ impl App {
     pub(super) fn open_reader(&mut self) {
         if self.selected_entry().is_some() {
             self.preview.reader = true;
-            self.focus = super::Focus::Preview;
+            self.tab.focus = super::Focus::Preview;
         }
     }
 
@@ -133,10 +133,10 @@ impl App {
             {
                 self.preview.reader = false;
                 if !self.preview.shown {
-                    self.focus = super::Focus::Files;
+                    self.tab.focus = super::Focus::Files;
                 }
             }
-            KeyCode::Esc | KeyCode::Char('q') => self.focus = super::Focus::Files,
+            KeyCode::Esc | KeyCode::Char('q') => self.tab.focus = super::Focus::Files,
             _ => {}
         }
     }
@@ -162,7 +162,7 @@ mod tests {
         fs::write(dir.join("b.txt"), "second file").unwrap();
         let (tx, rx) = mpsc::channel();
         let mut app = App::new(dir.clone(), Places::from_user_dirs("", &dir), tx);
-        while !matches!(app.listing, Listing::Ready(_)) {
+        while !matches!(app.tab.listing, Listing::Ready(_)) {
             app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
         }
         let key = |code| AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
@@ -205,13 +205,13 @@ mod reader_tests {
         std::fs::write(dir.join("a.txt"), text).unwrap();
         let (tx, rx) = mpsc::channel();
         let mut app = App::new(dir.clone(), Places::from_user_dirs("", &dir), tx);
-        while !matches!(app.listing, Listing::Ready(_)) {
+        while !matches!(app.tab.listing, Listing::Ready(_)) {
             app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
         }
         let key = |code| AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
         app.handle(key(KeyCode::Char('r')));
         assert!(app.preview.reader);
-        assert_eq!(app.focus, Focus::Preview);
+        assert_eq!(app.tab.focus, Focus::Preview);
         app.want_preview(80, 20);
         while app.preview.current.is_none() {
             app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
@@ -222,7 +222,7 @@ mod reader_tests {
         assert_eq!(app.preview.scroll, 99, "stops at the last line");
         app.handle(key(KeyCode::Esc));
         assert!(!app.preview.reader);
-        assert_eq!(app.focus, Focus::Files);
+        assert_eq!(app.tab.focus, Focus::Files);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

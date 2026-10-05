@@ -29,7 +29,7 @@ pub struct GitPanel {
 
 impl App {
     fn git_root(&self) -> Option<PathBuf> {
-        self.git.as_ref().map(|g| g.root.clone())
+        self.tab.git.as_ref().map(|g| g.root.clone())
     }
 
     fn git_command(&mut self, args: Vec<String>, label: &str) {
@@ -43,7 +43,7 @@ impl App {
 
     /// Paths the git action works on: the git panel's file, else marked / selected entries.
     fn git_targets(&self) -> Vec<PathBuf> {
-        if let (Some(panel), Some(git)) = (&self.git_panel, &self.git) {
+        if let (Some(panel), Some(git)) = (&self.git_panel, &self.tab.git) {
             return git
                 .files
                 .get(panel.selected)
@@ -99,7 +99,7 @@ impl App {
     /// trash (not deleted, so Ctrl+Z can bring them back).
     pub(super) fn git_discard(&mut self, paths: Vec<PathBuf>) {
         let (untracked, tracked): (Vec<_>, Vec<_>) = paths.into_iter().partition(|p| {
-            self.git.as_ref().and_then(|g| g.marks.get(p)).copied() == Some(GitMark::UNTRACKED)
+            self.tab.git.as_ref().and_then(|g| g.marks.get(p)).copied() == Some(GitMark::UNTRACKED)
         });
         if !tracked.is_empty() {
             let args = Self::with_paths(
@@ -119,6 +119,7 @@ impl App {
 
     pub(super) fn begin_git_commit(&mut self) {
         let staged = self
+            .tab
             .git
             .as_ref()
             .is_some_and(|g| g.files.iter().any(|(_, m)| m.is_staged()));
@@ -153,7 +154,7 @@ impl App {
     /// `p`: pushes the current branch's commits (not files: what is committed) to the remote.
     /// A branch without an upstream is pushed with `-u`, so later pushes know where to go.
     pub(super) fn git_push(&mut self) {
-        let Some(git) = &self.git else {
+        let Some(git) = &self.tab.git else {
             return;
         };
         if git.upstream.is_some() {
@@ -183,7 +184,7 @@ impl App {
     pub(super) fn on_git_branches(&mut self, result: Result<Vec<String>, String>) {
         match result {
             Ok(branches) => {
-                let current = self.git.as_ref().map(|g| g.branch.as_str());
+                let current = self.tab.git.as_ref().map(|g| g.branch.as_str());
                 let selected = branches
                     .iter()
                     .position(|b| Some(b.as_str()) == current)
@@ -221,7 +222,7 @@ impl App {
             Err(e) => format!("git: {}", first_line(&e)),
         });
         // A refresh asks for the git status itself when its listing arrives.
-        if self.results.is_none() {
+        if self.tab.results.is_none() {
             self.refresh();
         } else {
             self.request_git();
@@ -236,7 +237,7 @@ impl App {
     pub(super) fn toggle_git_panel(&mut self) {
         if self.git_panel.is_some() {
             self.git_panel = None;
-        } else if let Some(git) = &self.git {
+        } else if let Some(git) = &self.tab.git {
             worker::spawn_git_remote(self.tx.clone(), git.root.clone(), git.upstream.clone());
             self.git_panel = Some(GitPanel {
                 selected: 0,
@@ -255,11 +256,11 @@ impl App {
 
     fn git_panel_file(&self) -> Option<(PathBuf, GitMark)> {
         let panel = self.git_panel.as_ref()?;
-        self.git.as_ref()?.files.get(panel.selected).cloned()
+        self.tab.git.as_ref()?.files.get(panel.selected).cloned()
     }
 
     pub(super) fn on_git_panel_key(&mut self, key: KeyEvent) {
-        let count = self.git.as_ref().map_or(0, |g| g.files.len());
+        let count = self.tab.git.as_ref().map_or(0, |g| g.files.len());
         let Some(panel) = &mut self.git_panel else {
             return;
         };
@@ -299,7 +300,7 @@ impl App {
                 if let Some((path, _)) = self.git_panel_file()
                     && let Some(dir) = path.parent()
                 {
-                    self.select_after_load =
+                    self.tab.select_after_load =
                         path.file_name().map(|n| n.to_string_lossy().into_owned());
                     self.git_panel = None;
                     self.load(dir.to_path_buf());
@@ -350,7 +351,7 @@ impl App {
         root: &std::path::Path,
         remote: Option<(String, String)>,
     ) {
-        let same_repo = self.git.as_ref().is_some_and(|g| g.root == root);
+        let same_repo = self.tab.git.as_ref().is_some_and(|g| g.root == root);
         if let (Some(panel), true) = (&mut self.git_panel, same_repo) {
             panel.remote = remote;
             panel.remote_known = true;
@@ -406,16 +407,17 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let mut app = App::new(dir.clone(), Places::from_user_dirs("", &dir), tx);
         pump(&mut app, &rx, |a| {
-            matches!(a.listing, Listing::Ready(_))
-                && a.git.as_ref().is_some_and(|g| !g.files.is_empty())
+            matches!(a.tab.listing, Listing::Ready(_))
+                && a.tab.git.as_ref().is_some_and(|g| !g.files.is_empty())
         });
-        assert_eq!(app.git.as_ref().unwrap().branch, "main");
+        assert_eq!(app.tab.git.as_ref().unwrap().branch, "main");
 
         press(&mut app, KeyCode::Char('g'), KeyModifiers::CONTROL);
         assert!(app.git_panel.is_some());
         press(&mut app, KeyCode::Char(' '), KeyModifiers::NONE); // stage a.txt
         pump(&mut app, &rx, |a| {
-            a.git
+            a.tab
+                .git
                 .as_ref()
                 .is_some_and(|g| g.files.iter().any(|(_, m)| m.is_staged()))
         });
@@ -426,7 +428,7 @@ mod tests {
         press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         pump(&mut app, &rx, |a| {
             a.message.as_deref() == Some("Committed")
-                && a.git.as_ref().is_some_and(|g| g.files.is_empty())
+                && a.tab.git.as_ref().is_some_and(|g| g.files.is_empty())
         });
         assert!(run(&dir, &["log", "--oneline"]).unwrap().contains("first"));
         fs::remove_dir_all(&dir).unwrap();

@@ -11,11 +11,10 @@ pub use actions::{Action, HELP, Menu};
 pub use file_ops::{ClipMode, Clipboard, Dialog, JobStatus, RenameInput};
 pub use git_ops::GitPanel;
 pub use preview::{PreviewKey, PreviewPane};
-pub use tabs::{TabLabel, Tabs};
+pub use tabs::{TabLabel, TabState, Tabs};
 pub use terminal_mode::{Focus, TermMode};
 
 use liman_core::i18n::{tr, trf};
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -33,7 +32,6 @@ use ratatui::widgets::TableState;
 
 use crate::event::AppEvent;
 use crate::open::{self, OpenPlan};
-use crate::terminal::Terminal;
 use crate::worker;
 
 /// Two clicks on the same row within this time count as a double click.
@@ -99,30 +97,16 @@ pub enum Listing {
 }
 
 pub struct App {
+    /// The active tab: its folder, listing, selection, history, shell... (ADR 0008: other tabs
+    /// are parked as `TabState` and swapped in here).
+    pub tab: TabState,
     pub running: bool,
     /// Set when the screen must be redrawn.
     pub dirty: bool,
-    pub cwd: PathBuf,
-    pub listing: Listing,
-    /// Indices into the `Ready` entries that pass the filter, in display order.
-    pub visible: Vec<usize>,
-    /// Selected row (index into `visible`) and scroll offset; kept between frames.
-    pub table: TableState,
-    /// Case-insensitive substring filter typed after `/`.
-    pub filter: String,
-    /// Folders visited before / after the current one (Ctrl+← / Ctrl+→).
-    back_stack: Vec<PathBuf>,
-    forward_stack: Vec<PathBuf>,
     /// The listing on its way comes from back/forward (do not touch the stacks).
     moving_in_history: bool,
-    /// Last selected entry per folder, restored when coming back.
-    remembered: std::collections::HashMap<PathBuf, String>,
     /// Order of folder listings (`s` / `S` / header click); saved in the config.
     pub sort: liman_core::sort::SortOrder,
-    /// Lower-case entry names, made once per listing for the filter.
-    names_lower: Vec<String>,
-    /// The (lower-case) filter `visible` was computed for.
-    visible_for: String,
     /// True while the user is typing the filter.
     pub filter_editing: bool,
     /// One-line message for the status bar (cleared on the next key press).
@@ -145,8 +129,6 @@ pub struct App {
     pub sidebar: Vec<Place>,
     /// Folders bookmarked with Ctrl+D (shown in Places with ★).
     pub bookmarks: Vec<PathBuf>,
-    /// Entries marked with Space (or Ctrl+A) for a multi-item operation.
-    pub marked: HashSet<PathBuf>,
     pub clipboard: Option<Clipboard>,
     /// The file operation running on the worker, if any.
     pub job: Option<JobStatus>,
@@ -158,11 +140,6 @@ pub struct App {
     pub grid_level: Option<usize>,
     /// Box size level drawn last frame. Written by the UI.
     pub drawn_grid_level: usize,
-    /// The embedded shell, started on first F4 / Ctrl+O and kept running while hidden.
-    pub terminal: Option<Terminal>,
-    pub term_mode: TermMode,
-    term_before_fullscreen: TermMode,
-    pub focus: Focus,
     /// Where the terminal was drawn last frame. Written by the UI.
     pub term_area: Rect,
     /// Panel height chosen with Ctrl+↑/↓ or by dragging its top border; `None` = 40% of the window.
@@ -174,8 +151,6 @@ pub struct App {
     drag: Option<Drag>,
     /// The large view `v` returns to from the compact list.
     last_large_view: View,
-    /// Git status of the repository around the open folder (None outside one).
-    pub git: Option<liman_core::git::GitStatus>,
     /// `g`: the git panel.
     pub git_panel: Option<GitPanel>,
     /// Commit message being typed.
@@ -209,12 +184,8 @@ pub struct App {
     pub help_open: bool,
     /// Where the theme list was drawn (for clicks). Written by the UI.
     pub picker_area: Rect,
-    /// Set while the view shows files found by a shell command instead of a folder.
-    pub results: Option<Results>,
     /// Results on their way from the worker (becomes `results` when the listing arrives).
     results_pending: Option<Results>,
-    /// The shell's folder as last seen, so each `cd` in the shell is followed once.
-    last_shell_cwd: Option<PathBuf>,
     /// When the shell's folder was last read (throttles it during long output).
     cwd_checked: Instant,
     /// Folder of the listing on its way, if any.
@@ -228,8 +199,6 @@ pub struct App {
     trash_dir: PathBuf,
     /// Incremented on every listing request; older results are ignored.
     generation: u64,
-    /// After going up a level, the folder we came from gets selected.
-    select_after_load: Option<String>,
     last_click: Option<(Instant, usize)>,
     options: ListOptions,
     tx: Sender<AppEvent>,
@@ -239,20 +208,11 @@ impl App {
     /// Creates the app and starts listing `cwd` in the background.
     pub fn new(cwd: PathBuf, places: Places, tx: Sender<AppEvent>) -> Self {
         let mut app = Self {
+            tab: TabState::fresh(cwd.clone()),
             running: true,
             dirty: true,
-            cwd: cwd.clone(),
-            listing: Listing::Loading,
-            visible: Vec::new(),
-            table: TableState::default(),
-            filter: String::new(),
-            names_lower: Vec::new(),
-            back_stack: Vec::new(),
-            forward_stack: Vec::new(),
             moving_in_history: false,
-            remembered: std::collections::HashMap::new(),
             sort: liman_core::sort::SortOrder::default(),
-            visible_for: String::new(),
             filter_editing: false,
             message: None,
             external: None,
@@ -261,22 +221,16 @@ impl App {
             drawn_view: View::Detailed,
             grid_level: None,
             drawn_grid_level: 0,
-            terminal: None,
-            term_mode: TermMode::Hidden,
-            term_before_fullscreen: TermMode::Hidden,
-            focus: Focus::Files,
             term_area: Rect::default(),
             term_height: None,
             dragging_panel: false,
             last_large_view: View::Grid,
             click_anchor: None,
             drag: None,
-            results: None,
             theme_picker: None,
             search_input: None,
             dialog: None,
             watch: crate::watch::FolderWatch::start(tx.clone()),
-            git: None,
             git_busy: false,
             git_panel: None,
             commit_input: None,
@@ -291,7 +245,6 @@ impl App {
             help_open: false,
             picker_area: Rect::default(),
             results_pending: None,
-            last_shell_cwd: None,
             cwd_checked: Instant::now(),
             loading_path: None,
             listing_started: Instant::now(),
@@ -303,7 +256,6 @@ impl App {
             path_bar_area: Rect::default(),
             sidebar: places.sidebar_with(&[]),
             bookmarks: Vec::new(),
-            marked: HashSet::new(),
             clipboard: None,
             job: None,
             history: Vec::new(),
@@ -311,7 +263,6 @@ impl App {
             trash_dir: trash::home_trash(&places.home),
             places,
             generation: 0,
-            select_after_load: None,
             last_click: None,
             options: ListOptions::default(),
             tx,
@@ -334,25 +285,25 @@ impl App {
             return;
         }
         self.git_busy = true;
-        worker::spawn_git_status(self.tx.clone(), self.cwd.clone());
+        worker::spawn_git_status(self.tx.clone(), self.tab.cwd.clone());
     }
 
     /// Reads the open folder again without blanking the view: the old list stays until the new one
     /// arrives; selection, marks and filter are kept.
     pub fn refresh(&mut self) {
         self.invalidate_preview();
-        if self.select_after_load.is_none() {
-            self.select_after_load = self.selected_entry().map(|e| e.name.clone());
+        if self.tab.select_after_load.is_none() {
+            self.tab.select_after_load = self.selected_entry().map(|e| e.name.clone());
         }
         self.generation += 1;
         self.current_generation
             .store(self.generation, std::sync::atomic::Ordering::Relaxed);
-        self.loading_path = Some(self.cwd.clone());
+        self.loading_path = Some(self.tab.cwd.clone());
         self.listing_started = Instant::now();
         worker::spawn_listing(
             self.tx.clone(),
             self.generation,
-            self.cwd.clone(),
+            self.tab.cwd.clone(),
             self.options,
         );
     }
@@ -367,18 +318,20 @@ impl App {
 
     fn start_loading(&mut self, path: &std::path::Path) {
         // Remember what was selected here, for when the user comes back.
-        if self.results.is_none()
+        if self.tab.results.is_none()
             && let Some(entry) = self.selected_entry()
         {
-            self.remembered.insert(self.cwd.clone(), entry.name.clone());
+            self.tab
+                .remembered
+                .insert(self.tab.cwd.clone(), entry.name.clone());
         }
         self.generation += 1;
         self.current_generation
             .store(self.generation, std::sync::atomic::Ordering::Relaxed);
-        self.listing = Listing::Loading;
-        self.visible.clear();
-        self.marked.clear();
-        self.filter.clear();
+        self.tab.listing = Listing::Loading;
+        self.tab.visible.clear();
+        self.tab.marked.clear();
+        self.tab.filter.clear();
         self.filter_editing = false;
         self.dirty = true;
         self.loading_path = Some(path.to_path_buf());
@@ -414,9 +367,12 @@ impl App {
             // Our own jobs refresh the folder as soon as they finish; their changes reach the
             // watcher too, a moment later. A listing started after the change already shows it.
             AppEvent::FolderChanged { dir, at } => {
-                let moving_away = self.loading_path.as_ref().is_some_and(|p| *p != self.cwd);
-                if dir == self.cwd
-                    && self.results.is_none()
+                let moving_away = self
+                    .loading_path
+                    .as_ref()
+                    .is_some_and(|p| *p != self.tab.cwd);
+                if dir == self.tab.cwd
+                    && self.tab.results.is_none()
                     && !moving_away
                     && at > self.listing_started
                 {
@@ -425,8 +381,8 @@ impl App {
             }
             AppEvent::Git { dir, status } => {
                 self.git_busy = false;
-                if dir == self.cwd {
-                    self.git = status;
+                if dir == self.tab.cwd {
+                    self.tab.git = status;
                     self.dirty = true;
                 }
                 if std::mem::take(&mut self.git_again) {
@@ -444,7 +400,7 @@ impl App {
             AppEvent::GitBranches(result) => self.on_git_branches(result),
             AppEvent::Preview { key, preview } => self.on_preview(key, *preview),
             AppEvent::TermQuiet(_) => {
-                let Some(term) = &mut self.terminal else {
+                let Some(term) = &mut self.tab.terminal else {
                     return;
                 };
                 term.on_quiet();
@@ -458,32 +414,32 @@ impl App {
     }
 
     fn is_active_terminal(&self, id: u64) -> bool {
-        self.terminal.as_ref().is_some_and(|t| t.id == id)
+        self.tab.terminal.as_ref().is_some_and(|t| t.id == id)
     }
 
     /// Entries currently shown, in display order.
     pub fn visible_entries(&self) -> impl Iterator<Item = &Entry> + '_ {
-        let entries: &[Entry] = match &self.listing {
+        let entries: &[Entry] = match &self.tab.listing {
             Listing::Ready(entries) => entries,
             _ => &[],
         };
-        self.visible.iter().filter_map(|&i| entries.get(i))
+        self.tab.visible.iter().filter_map(|&i| entries.get(i))
     }
 
     /// The entry on display row `row`.
     pub fn visible_entry(&self, row: usize) -> Option<&Entry> {
-        let Listing::Ready(entries) = &self.listing else {
+        let Listing::Ready(entries) = &self.tab.listing else {
             return None;
         };
-        self.visible.get(row).map(|&i| &entries[i])
+        self.tab.visible.get(row).map(|&i| &entries[i])
     }
 
     pub fn selected_entry(&self) -> Option<&Entry> {
-        let Listing::Ready(entries) = &self.listing else {
+        let Listing::Ready(entries) = &self.tab.listing else {
             return None;
         };
-        let row = self.table.selected()?;
-        self.visible.get(row).map(|&i| &entries[i])
+        let row = self.tab.table.selected()?;
+        self.tab.visible.get(row).map(|&i| &entries[i])
     }
 
     // ---- keyboard ----
@@ -501,28 +457,30 @@ impl App {
             }
             KeyCode::F(3) => return self.toggle_preview(),
             KeyCode::Char('o') if ctrl => return self.toggle_fullscreen(),
-            KeyCode::F(6) if self.term_mode == TermMode::Panel => return self.switch_focus(),
-            KeyCode::Up if ctrl && self.term_mode == TermMode::Panel => {
+            KeyCode::F(6) if self.tab.term_mode == TermMode::Panel => return self.switch_focus(),
+            KeyCode::Up if ctrl && self.tab.term_mode == TermMode::Panel => {
                 return self.resize_panel(2);
             }
-            KeyCode::Down if ctrl && self.term_mode == TermMode::Panel => {
+            KeyCode::Down if ctrl && self.tab.term_mode == TermMode::Panel => {
                 return self.resize_panel(-2);
             }
             // Tab / Shift+Tab move between Places, Files and the terminal panel. In the terminal,
             // Tab completes while there is text on the command line.
             KeyCode::Tab
                 if !self.terminal_has_focus()
-                    || (self.term_mode == TermMode::Panel && self.terminal_line_empty()) =>
+                    || (self.tab.term_mode == TermMode::Panel && self.terminal_line_empty()) =>
             {
                 return self.focus_next();
             }
-            KeyCode::BackTab if self.term_mode != TermMode::Fullscreen => return self.focus_prev(),
+            KeyCode::BackTab if self.tab.term_mode != TermMode::Fullscreen => {
+                return self.focus_prev();
+            }
             _ => {}
         }
         if self.terminal_has_focus() {
             return self.on_term_key(key);
         }
-        if self.focus == Focus::Places && self.on_places_key(key) {
+        if self.tab.focus == Focus::Places && self.on_places_key(key) {
             return;
         }
         if self.dialog.is_some() {
@@ -531,7 +489,7 @@ impl App {
         if self.menu.is_some() {
             return self.on_menu_key(key);
         }
-        if self.focus == Focus::Preview {
+        if self.tab.focus == Focus::Preview {
             return self.on_preview_key(key);
         }
         if self.commit_input.is_some() {
@@ -579,9 +537,9 @@ impl App {
             KeyCode::Char('p') if ctrl => self.open_palette(),
             KeyCode::Char(' ') if ctrl => self.toggle_mark_here(),
             KeyCode::Char(' ') => self.toggle_mark(),
-            KeyCode::Esc if !self.filter.is_empty() => self.set_filter(String::new()),
-            KeyCode::Esc if self.results.is_some() => self.go_up(),
-            KeyCode::Esc => self.marked.clear(),
+            KeyCode::Esc if !self.tab.filter.is_empty() => self.set_filter(String::new()),
+            KeyCode::Esc if self.tab.results.is_some() => self.go_up(),
+            KeyCode::Esc => self.tab.marked.clear(),
             // Shift+arrows / Home / End / PgUp / PgDn: mark everything from where Shift started.
             KeyCode::Up
             | KeyCode::Down
@@ -627,9 +585,9 @@ impl App {
                 self.set_filter(String::new());
             }
             KeyCode::Enter => self.filter_editing = false,
-            KeyCode::Backspace if self.filter.is_empty() => self.filter_editing = false,
+            KeyCode::Backspace if self.tab.filter.is_empty() => self.filter_editing = false,
             KeyCode::Backspace => {
-                let mut f = self.filter.clone();
+                let mut f = self.tab.filter.clone();
                 f.pop();
                 self.set_filter(f);
             }
@@ -637,7 +595,7 @@ impl App {
             KeyCode::Down => self.move_selection(1),
             KeyCode::Up => self.move_selection(-1),
             KeyCode::Char(c) if is_typing(key) => {
-                let f = format!("{}{c}", self.filter);
+                let f = format!("{}{c}", self.tab.filter);
                 self.set_filter(f);
             }
             _ => {}
@@ -677,7 +635,7 @@ impl App {
             MouseEventKind::Down(button) if self.tab_row_click(mouse.column, mouse.row, button) => {
             }
             MouseEventKind::Down(MouseButton::Left)
-                if self.term_mode == TermMode::Panel && mouse.row == self.term_area.y =>
+                if self.tab.term_mode == TermMode::Panel && mouse.row == self.term_area.y =>
             {
                 self.dragging_panel = true; // grabbed the panel's top border
             }
@@ -744,12 +702,12 @@ impl App {
             self.help_open = false;
             return;
         }
-        if self.term_mode == TermMode::Fullscreen {
+        if self.tab.term_mode == TermMode::Fullscreen {
             return;
         }
-        if self.term_mode == TermMode::Panel {
+        if self.tab.term_mode == TermMode::Panel {
             let in_terminal = self.term_area.contains((column, row).into());
-            self.focus = if in_terminal {
+            self.tab.focus = if in_terminal {
                 Focus::Terminal
             } else {
                 Focus::Files
@@ -767,7 +725,7 @@ impl App {
             let segments = self.path_segments();
             if let Some(i) = breadcrumb::segment_at(&segments, self.path_bar_area.x, column) {
                 let path = segments[i].path.clone();
-                if path != self.cwd {
+                if path != self.tab.cwd {
                     self.load(path);
                 }
             }
@@ -788,15 +746,18 @@ impl App {
             let Some(path) = self.visible_entry(index).map(|e| e.path.clone()) else {
                 return;
             };
-            if !self.marked.remove(&path) {
-                self.marked.insert(path);
+            if !self.tab.marked.remove(&path) {
+                self.tab.marked.insert(path);
             }
-            self.table.select(Some(index));
+            self.tab.table.select(Some(index));
             self.click_anchor = Some(index);
             return;
         }
         if modifiers.contains(KeyModifiers::SHIFT) {
-            let anchor = self.click_anchor.or(self.table.selected()).unwrap_or(index);
+            let anchor = self
+                .click_anchor
+                .or(self.tab.table.selected())
+                .unwrap_or(index);
             let (from, to) = (anchor.min(index), anchor.max(index));
             let paths: Vec<_> = self
                 .visible_entries()
@@ -804,8 +765,8 @@ impl App {
                 .take(to - from + 1)
                 .map(|e| e.path.clone())
                 .collect();
-            self.marked.extend(paths);
-            self.table.select(Some(index));
+            self.tab.marked.extend(paths);
+            self.tab.table.select(Some(index));
             return;
         }
         self.click_anchor = Some(index);
@@ -818,7 +779,7 @@ impl App {
         let double = self
             .last_click
             .is_some_and(|(at, i)| i == index && now.duration_since(at) <= DOUBLE_CLICK);
-        self.table.select(Some(index));
+        self.tab.table.select(Some(index));
         if double {
             self.last_click = None;
             self.activate_selected();
@@ -843,10 +804,10 @@ impl App {
         let items = match self.entry_at(column, row) {
             Some(index) => {
                 let path = self.visible_entry(index).map(|e| e.path.clone());
-                if path.is_some_and(|p| !self.marked.contains(&p)) {
-                    self.marked.clear(); // right-click on an unmarked entry acts on that entry only
+                if path.is_some_and(|p| !self.tab.marked.contains(&p)) {
+                    self.tab.marked.clear(); // right-click on an unmarked entry acts on that entry only
                 }
-                self.table.select(Some(index));
+                self.tab.table.select(Some(index));
                 Action::ON_ENTRY.to_vec()
             }
             None if self.list_area.contains((column, row).into()) => Action::ON_FOLDER.to_vec(),
@@ -898,16 +859,18 @@ impl App {
     /// The visible entry under terminal cell (`column`, `row`) in the list or grid.
     fn entry_at(&self, column: u16, row: u16) -> Option<usize> {
         let hit = match self.drawn_view.list_mode() {
-            Some(mode) => FileList::row_at(self.list_area, self.table.offset(), mode, column, row),
+            Some(mode) => {
+                FileList::row_at(self.list_area, self.tab.table.offset(), mode, column, row)
+            }
             None => GridView::index_at(
                 self.list_area,
-                self.table.offset(),
+                self.tab.table.offset(),
                 self.drawn_grid_level,
                 column,
                 row,
             ),
         };
-        hit.filter(|&i| i < self.visible.len())
+        hit.filter(|&i| i < self.tab.visible.len())
     }
 
     /// The folder under the mouse: a folder in the list or a place in the sidebar (Recent is a
@@ -948,7 +911,7 @@ impl App {
         let Some(dragged) = self.visible_entry(drag.from).map(|e| e.path.clone()) else {
             return;
         };
-        let sources: Vec<PathBuf> = if self.marked.contains(&dragged) {
+        let sources: Vec<PathBuf> = if self.tab.marked.contains(&dragged) {
             self.targets()
         } else {
             vec![dragged]
@@ -966,7 +929,7 @@ impl App {
     // ---- navigation ----
 
     pub fn path_segments(&self) -> Vec<Segment> {
-        breadcrumb::segments(&self.cwd, &self.places.home)
+        breadcrumb::segments(&self.tab.cwd, &self.places.home)
     }
 
     /// Entries that fit on one screen; at least one.
@@ -1010,7 +973,7 @@ impl App {
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
                 if self.sidebar_selected < self.sidebar.len() {
                     self.open_place(self.sidebar_selected);
-                    self.focus = Focus::Files;
+                    self.tab.focus = Focus::Files;
                 }
             }
             _ => return false,
@@ -1086,7 +1049,7 @@ impl App {
     fn toggle_bookmark(&mut self) {
         let folder = match self.selected_entry() {
             Some(e) if e.is_dir => e.path.clone(),
-            _ => self.cwd.clone(),
+            _ => self.tab.cwd.clone(),
         };
         self.toggle_bookmark_for(folder);
     }
@@ -1134,7 +1097,7 @@ impl App {
         }
         if settings.get("hidden").is_some_and(|v| v == "true") && !self.options.show_hidden {
             self.options.show_hidden = true;
-            self.load(self.cwd.clone());
+            self.load(self.tab.cwd.clone());
         }
     }
 
@@ -1165,9 +1128,9 @@ impl App {
             })
             .into(),
         );
-        self.select_after_load = self.selected_entry().map(|e| e.name.clone());
-        if self.results.is_none() {
-            self.load(self.cwd.clone());
+        self.tab.select_after_load = self.selected_entry().map(|e| e.name.clone());
+        if self.tab.results.is_none() {
+            self.load(self.tab.cwd.clone());
         }
     }
 
@@ -1187,11 +1150,11 @@ impl App {
     fn set_sort_quietly(&mut self, order: liman_core::sort::SortOrder) {
         self.sort = order;
         let keep = self.selected_entry().map(|e| e.path.clone());
-        if let Listing::Ready(entries) = &mut self.listing {
+        if let Listing::Ready(entries) = &mut self.tab.listing {
             liman_core::sort::sort_with(entries, order);
         }
-        self.names_lower.clear();
-        self.visible_for.clear();
+        self.tab.names_lower.clear();
+        self.tab.visible_for.clear();
         self.refresh_visible();
         let row = keep
             .and_then(|p| self.visible_entries().position(|e| e.path == p))
@@ -1258,17 +1221,17 @@ impl App {
     }
 
     fn move_selection(&mut self, delta: isize) {
-        if self.visible.is_empty() {
+        if self.tab.visible.is_empty() {
             return;
         }
-        let current = self.table.selected().unwrap_or(0);
+        let current = self.tab.table.selected().unwrap_or(0);
         self.select_row(current.saturating_add_signed(delta));
     }
 
     /// Shift+movement: the anchor (where the range started: the last plain click or the selection
     /// when Shift was first pressed) stays, the cursor moves, and exactly the range is marked.
     fn extend_selection(&mut self, code: KeyCode) {
-        let Some(current) = self.table.selected() else {
+        let Some(current) = self.tab.table.selected() else {
             return;
         };
         let anchor = *self.click_anchor.get_or_insert(current);
@@ -1284,9 +1247,9 @@ impl App {
             KeyCode::End => self.select_row(usize::MAX),
             _ => return,
         }
-        let to = self.table.selected().unwrap_or(anchor);
+        let to = self.tab.table.selected().unwrap_or(anchor);
         let (from, to) = (anchor.min(to), anchor.max(to));
-        self.marked = self
+        self.tab.marked = self
             .visible_entries()
             .skip(from)
             .take(to - from + 1)
@@ -1296,10 +1259,12 @@ impl App {
 
     /// Selects `row`, clamped to the last row.
     fn select_row(&mut self, row: usize) {
-        if self.visible.is_empty() {
-            self.table.select(None);
+        if self.tab.visible.is_empty() {
+            self.tab.table.select(None);
         } else {
-            self.table.select(Some(row.min(self.visible.len() - 1)));
+            self.tab
+                .table
+                .select(Some(row.min(self.tab.visible.len() - 1)));
         }
     }
 
@@ -1330,7 +1295,7 @@ impl App {
     pub(super) fn on_command_finished(&mut self, out: crate::terminal::CommandOutput) {
         // A command that moved the shell (`cd /usr/share`) is navigation, not a list of files:
         // the view follows the folder instead.
-        let shell_now = self.terminal.as_ref().and_then(|t| t.cwd());
+        let shell_now = self.tab.terminal.as_ref().and_then(|t| t.cwd());
         if shell_now.is_some_and(|now| now != out.cwd) {
             return;
         }
@@ -1377,7 +1342,7 @@ impl App {
                     return;
                 }
                 // Search the folder itself, not inside a previous result list.
-                let base = self.cwd.clone();
+                let base = self.tab.cwd.clone();
                 self.results_pending = Some(Results {
                     command: trf("search “{}”", &[&needle]),
                     count: 0, // filled in when the listing arrives
@@ -1398,29 +1363,30 @@ impl App {
     }
 
     fn go_back(&mut self) {
-        if let Some(path) = self.back_stack.pop() {
-            self.forward_stack.push(self.cwd.clone());
+        if let Some(path) = self.tab.back_stack.pop() {
+            self.tab.forward_stack.push(self.tab.cwd.clone());
             self.moving_in_history = true;
             self.load(path);
         }
     }
 
     fn go_forward(&mut self) {
-        if let Some(path) = self.forward_stack.pop() {
-            self.back_stack.push(self.cwd.clone());
+        if let Some(path) = self.tab.forward_stack.pop() {
+            self.tab.back_stack.push(self.tab.cwd.clone());
             self.moving_in_history = true;
             self.load(path);
         }
     }
 
     fn go_up(&mut self) {
-        if self.results.is_some() {
-            return self.load(self.cwd.clone()); // back from results to the folder
+        if self.tab.results.is_some() {
+            return self.load(self.tab.cwd.clone()); // back from results to the folder
         }
-        let Some(parent) = self.cwd.parent().map(PathBuf::from) else {
+        let Some(parent) = self.tab.cwd.parent().map(PathBuf::from) else {
             return;
         };
-        self.select_after_load = self
+        self.tab.select_after_load = self
+            .tab
             .cwd
             .file_name()
             .map(|n| n.to_string_lossy().into_owned());
@@ -1428,7 +1394,7 @@ impl App {
     }
 
     fn set_filter(&mut self, filter: String) {
-        self.filter = filter;
+        self.tab.filter = filter;
         self.refresh_visible();
         self.select_row(0);
     }
@@ -1437,28 +1403,29 @@ impl App {
     /// filter is first typed; when the filter only got longer, the search stays inside the
     /// previous matches.
     fn refresh_visible(&mut self) {
-        let Listing::Ready(entries) = &self.listing else {
-            self.visible.clear();
+        let Listing::Ready(entries) = &self.tab.listing else {
+            self.tab.visible.clear();
             return;
         };
-        let needle = self.filter.to_lowercase();
+        let needle = self.tab.filter.to_lowercase();
         if needle.is_empty() {
-            self.visible = (0..entries.len()).collect();
-            self.visible_for.clear();
+            self.tab.visible = (0..entries.len()).collect();
+            self.tab.visible_for.clear();
             return;
         }
         // Made on the first filter key, not for every listing.
-        if self.names_lower.len() != entries.len() {
-            self.names_lower = entries.iter().map(|e| e.name.to_lowercase()).collect();
+        if self.tab.names_lower.len() != entries.len() {
+            self.tab.names_lower = entries.iter().map(|e| e.name.to_lowercase()).collect();
         }
-        let narrowing = !self.visible_for.is_empty() && needle.starts_with(&self.visible_for);
-        let matches = |i: &usize| self.names_lower[*i].contains(&needle);
-        self.visible = if narrowing {
-            self.visible.iter().copied().filter(matches).collect()
+        let narrowing =
+            !self.tab.visible_for.is_empty() && needle.starts_with(&self.tab.visible_for);
+        let matches = |i: &usize| self.tab.names_lower[*i].contains(&needle);
+        self.tab.visible = if narrowing {
+            self.tab.visible.iter().copied().filter(matches).collect()
         } else {
             (0..entries.len()).filter(matches).collect()
         };
-        self.visible_for = needle;
+        self.tab.visible_for = needle;
     }
 
     // ---- worker results ----
@@ -1473,7 +1440,7 @@ impl App {
         if generation != self.generation {
             return;
         }
-        let Listing::Ready(entries) = &mut self.listing else {
+        let Listing::Ready(entries) = &mut self.tab.listing else {
             return;
         };
         let counts: std::collections::HashMap<PathBuf, _> =
@@ -1487,7 +1454,7 @@ impl App {
         // A size sort uses the counts. Sorting again moves the selection around, so it happens
         // once at the end, and at most once a second while a long count is still running.
         let due = done || self.counts_sorted.elapsed() >= COUNT_SORT_INTERVAL;
-        if self.sort.key == liman_core::sort::SortKey::Size && self.results.is_none() && due {
+        if self.sort.key == liman_core::sort::SortKey::Size && self.tab.results.is_none() && due {
             self.counts_sorted = Instant::now();
             self.set_sort_quietly(self.sort);
         }
@@ -1499,26 +1466,26 @@ impl App {
             return; // stale: a newer request is on its way
         }
         self.loading_path = None;
-        self.results = self.results_pending.take();
-        if let (Some(results), Ok(entries)) = (&mut self.results, &result) {
+        self.tab.results = self.results_pending.take();
+        if let (Some(results), Ok(entries)) = (&mut self.tab.results, &result) {
             results.count = entries.len();
         }
         let from_shell = std::mem::take(&mut self.load_from_shell);
         if result.is_ok() {
             self.sync_shell_to(&path, from_shell);
-            if self.results_pending.is_none() && self.results.is_none() {
+            if self.results_pending.is_none() && self.tab.results.is_none() {
                 self.watch.watch(&path);
             }
         }
         // History: a move to another folder (not back/forward, not a reload) is a new step.
         let from_history = std::mem::take(&mut self.moving_in_history);
-        if path != self.cwd {
+        if path != self.tab.cwd {
             if !from_history {
-                self.back_stack.push(self.cwd.clone());
-                self.forward_stack.clear();
+                self.tab.back_stack.push(self.tab.cwd.clone());
+                self.tab.forward_stack.clear();
             }
-            if self.select_after_load.is_none() {
-                self.select_after_load = self.remembered.get(&path).cloned();
+            if self.tab.select_after_load.is_none() {
+                self.tab.select_after_load = self.tab.remembered.get(&path).cloned();
             }
         }
         // A reload of the same folder keeps the counts it had until the new ones arrive (no flicker).
@@ -1529,16 +1496,16 @@ impl App {
             Option<liman_core::FileType>,
             Option<std::time::SystemTime>,
         );
-        let old_counts: std::collections::HashMap<PathBuf, Known> = match &self.listing {
-            Listing::Ready(old) if path == self.cwd => old
+        let old_counts: std::collections::HashMap<PathBuf, Known> = match &self.tab.listing {
+            Listing::Ready(old) if path == self.tab.cwd => old
                 .iter()
                 .filter_map(|e| Some((e.path.clone(), (e.item_count?, e.contents, e.modified))))
                 .collect(),
             _ => Default::default(),
         };
         let mut to_count = Vec::new();
-        self.cwd = path;
-        self.listing = match result {
+        self.tab.cwd = path;
+        self.tab.listing = match result {
             Ok(mut entries) => {
                 for entry in entries.iter_mut().filter(|e| e.is_dir) {
                     entry.special = self.places.kind_of(&entry.path);
@@ -1574,21 +1541,22 @@ impl App {
                 self.options,
             );
         }
-        self.names_lower.clear();
-        self.visible_for.clear();
+        self.tab.names_lower.clear();
+        self.tab.visible_for.clear();
         self.refresh_visible();
-        self.table = TableState::default();
-        let came_from = self.select_after_load.take();
+        self.tab.table = TableState::default();
+        let came_from = self.tab.select_after_load.take();
         let row = came_from
             .and_then(|name| self.visible_entries().position(|e| e.name == name))
             .unwrap_or(0);
         self.select_row(row);
         if self
+            .tab
             .git
             .as_ref()
-            .is_none_or(|g| !self.cwd.starts_with(&g.root))
+            .is_none_or(|g| !self.tab.cwd.starts_with(&g.root))
         {
-            self.git = None; // left the repository; the new status arrives soon
+            self.tab.git = None; // left the repository; the new status arrives soon
         }
         self.request_git();
         if std::mem::take(&mut self.rename_after_load) {
@@ -1598,8 +1566,8 @@ impl App {
     }
 
     pub fn entry_count(&self) -> Option<usize> {
-        match &self.listing {
-            Listing::Ready(_) => Some(self.visible.len()),
+        match &self.tab.listing {
+            Listing::Ready(_) => Some(self.tab.visible.len()),
             _ => None,
         }
     }
@@ -1725,7 +1693,7 @@ mod tests {
         let (mut app, _rx) = app();
         app.handle(key(KeyCode::Char('j'))); // Projects
         app.handle(key(KeyCode::Enter));
-        assert!(matches!(app.listing, Listing::Loading));
+        assert!(matches!(app.tab.listing, Listing::Loading));
     }
 
     #[test]
@@ -1735,7 +1703,7 @@ mod tests {
         // Do not actually launch anything from a test: only check the folder did not change.
         let entry = app.selected_entry().unwrap().clone();
         assert!(!entry.is_dir);
-        assert!(matches!(app.listing, Listing::Ready(_)));
+        assert!(matches!(app.tab.listing, Listing::Ready(_)));
     }
 
     #[test]
@@ -1753,7 +1721,7 @@ mod tests {
                 entry("a.txt", false),
             ]),
         });
-        assert_eq!(app.cwd, PathBuf::from("/data"));
+        assert_eq!(app.tab.cwd, PathBuf::from("/data"));
         assert_eq!(selected_name(&app), "Projects");
     }
 
@@ -1764,7 +1732,7 @@ mod tests {
         for c in ['P', 'r', 'o'] {
             app.handle(key(KeyCode::Char(c)));
         }
-        assert_eq!(app.filter, "Pro");
+        assert_eq!(app.tab.filter, "Pro");
         assert_eq!(app.entry_count(), Some(1));
         assert_eq!(selected_name(&app), "Projects");
 
@@ -1777,7 +1745,7 @@ mod tests {
         app.handle(key(KeyCode::Char('/')));
         app.handle(key(KeyCode::Char('x')));
         app.handle(key(KeyCode::Esc));
-        assert_eq!(app.filter, "");
+        assert_eq!(app.tab.filter, "");
         assert_eq!(app.entry_count(), Some(5));
     }
 
@@ -1786,9 +1754,9 @@ mod tests {
         let (mut app, _rx) = app();
         app.handle(click(30, 5)); // second row: Projects
         assert_eq!(selected_name(&app), "Projects");
-        assert!(matches!(app.listing, Listing::Ready(_)));
+        assert!(matches!(app.tab.listing, Listing::Ready(_)));
         app.handle(click(30, 5));
-        assert!(matches!(app.listing, Listing::Loading));
+        assert!(matches!(app.tab.listing, Listing::Loading));
     }
 
     #[test]
@@ -1812,7 +1780,7 @@ mod tests {
     fn clicking_the_sidebar_or_path_bar_navigates() {
         let (mut app, _rx) = app();
         app.handle(click(5, 1)); // sidebar row 0: Home (/data)
-        assert!(matches!(app.listing, Listing::Loading));
+        assert!(matches!(app.tab.listing, Listing::Loading));
 
         let (tx, _rx) = mpsc::channel();
         let mut app = App::new(PathBuf::from("/data/Projects"), places(), tx);
@@ -1824,7 +1792,7 @@ mod tests {
             result: Ok(Vec::new()),
         });
         app.handle(click(3, 0)); // "⌂ Home"
-        assert!(matches!(app.listing, Listing::Loading));
+        assert!(matches!(app.tab.listing, Listing::Loading));
     }
 
     #[test]
@@ -1882,7 +1850,7 @@ mod tests {
             KeyCode::Down,
             KeyModifiers::ALT,
         ))));
-        assert!(matches!(app.listing, Listing::Loading)); // entered Music
+        assert!(matches!(app.tab.listing, Listing::Loading)); // entered Music
 
         let (tx, _rx) = mpsc::channel();
         let mut app = App::new(PathBuf::from("/data/Projects"), places(), tx);
@@ -1908,18 +1876,18 @@ mod tests {
     fn tab_cycles_places_files_and_places_keys_open_a_place() {
         let (mut app, _rx) = app();
         app.sidebar_area = Rect::new(0, 1, 22, 10);
-        app.focus = Focus::Places;
+        app.tab.focus = Focus::Places;
         app.handle(key(KeyCode::Tab));
-        assert_eq!(app.focus, Focus::Files);
+        assert_eq!(app.tab.focus, Focus::Files);
         app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
             KeyCode::BackTab,
             KeyModifiers::SHIFT,
         ))));
-        assert_eq!(app.focus, Focus::Places);
+        assert_eq!(app.tab.focus, Focus::Places);
         app.handle(key(KeyCode::Down)); // stays on the only place
         app.handle(key(KeyCode::Enter)); // opens Home (/data)
-        assert_eq!(app.focus, Focus::Files);
-        assert!(matches!(app.listing, Listing::Loading));
+        assert_eq!(app.tab.focus, Focus::Files);
+        assert!(matches!(app.tab.listing, Listing::Loading));
     }
 
     #[test]
@@ -1944,7 +1912,7 @@ mod tests {
         app.places.home = std::env::temp_dir().join("liman-test-no-config"); // keep the real config untouched
         app.handle(ctrl_h);
         assert!(app.options.show_hidden);
-        assert!(matches!(app.listing, Listing::Loading));
+        assert!(matches!(app.tab.listing, Listing::Loading));
     }
 
     /// Delivers a listing of `path` with the given names (all folders) for the newest request.
@@ -1969,7 +1937,7 @@ mod tests {
         assert_eq!(selected_name(&app), "Projects");
         app.handle(alt(KeyCode::Left)); // up again: /, not back into Projects
         arrive(&mut app, "/", &["data"]);
-        assert_eq!(app.cwd, PathBuf::from("/"));
+        assert_eq!(app.tab.cwd, PathBuf::from("/"));
     }
 
     #[test]
@@ -1983,6 +1951,7 @@ mod tests {
         app.handle(shift(KeyCode::Down)); // b..d
         let marked = |app: &App| {
             let mut names: Vec<String> = app
+                .tab
                 .marked
                 .iter()
                 .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
@@ -2006,13 +1975,13 @@ mod tests {
         let alt = |code| AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL)));
         app.handle(alt(KeyCode::Left)); // back
         arrive(&mut app, "/data", &["Music", "Projects"]);
-        assert_eq!(app.cwd, PathBuf::from("/data"));
+        assert_eq!(app.tab.cwd, PathBuf::from("/data"));
         assert_eq!(selected_name(&app), "Projects"); // remembered
         app.handle(alt(KeyCode::Right)); // forward
         arrive(&mut app, "/data/Projects", &["liman"]);
-        assert_eq!(app.cwd, PathBuf::from("/data/Projects"));
-        assert!(app.forward_stack.is_empty());
-        assert_eq!(app.back_stack, [PathBuf::from("/data")]);
+        assert_eq!(app.tab.cwd, PathBuf::from("/data/Projects"));
+        assert!(app.tab.forward_stack.is_empty());
+        assert_eq!(app.tab.back_stack, [PathBuf::from("/data")]);
     }
 
     #[test]
@@ -2031,13 +2000,13 @@ mod tests {
             app.handle(key(KeyCode::Char(c)));
         }
         app.handle(key(KeyCode::Enter));
-        while app.results.is_none() {
+        while app.tab.results.is_none() {
             let ev = rx
                 .recv_timeout(std::time::Duration::from_secs(5))
                 .expect("search result");
             app.handle(ev);
         }
-        assert_eq!(app.results.as_ref().unwrap().count, 1);
+        assert_eq!(app.tab.results.as_ref().unwrap().count, 1);
         assert_eq!(app.visible_entry(0).unwrap().name, "sub/report.pdf");
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -2114,7 +2083,7 @@ mod tests {
     #[test]
     fn ctrl_arrows_resize_the_panel_within_limits() {
         let (mut app, _rx) = app();
-        app.term_mode = TermMode::Panel;
+        app.tab.term_mode = TermMode::Panel;
         app.term_area = Rect::new(0, 20, 80, 10);
         app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
             KeyCode::Up,
@@ -2141,7 +2110,7 @@ mod tests {
         assert_eq!(selected_name(&app), "b.pdf");
         app.handle(key(KeyCode::Left));
         assert_eq!(selected_name(&app), "a.txt");
-        assert_eq!(app.cwd, PathBuf::from("/data")); // left did not go up a folder
+        assert_eq!(app.tab.cwd, PathBuf::from("/data")); // left did not go up a folder
     }
 
     #[test]
@@ -2213,7 +2182,7 @@ mod tests {
             path: PathBuf::from("/old"),
             result: Ok(Vec::new()),
         });
-        assert!(matches!(app.listing, Listing::Loading));
+        assert!(matches!(app.tab.listing, Listing::Loading));
     }
 }
 
@@ -2230,9 +2199,9 @@ mod count_tests {
         app.sidebar_area = Rect::new(0, 0, 20, 10); // sidebar visible
         let tab = AppEvent::Input(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
         app.handle(tab);
-        assert!(app.terminal.is_none());
-        assert_eq!(app.term_mode, TermMode::Hidden);
-        assert_eq!(app.focus, Focus::Places);
+        assert!(app.tab.terminal.is_none());
+        assert_eq!(app.tab.term_mode, TermMode::Hidden);
+        assert_eq!(app.tab.focus, Focus::Places);
     }
 
     #[test]
@@ -2245,7 +2214,7 @@ mod count_tests {
         }
         let (tx, rx) = mpsc::channel();
         let mut app = App::new(dir.clone(), Places::from_user_dirs("", &dir), tx);
-        let count = |app: &App| match &app.listing {
+        let count = |app: &App| match &app.tab.listing {
             Listing::Ready(e) => e[0].item_count,
             _ => None,
         };

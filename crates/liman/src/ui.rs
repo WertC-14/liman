@@ -171,7 +171,7 @@ fn confirm_lines(question: String, note: &'static str, verb: &'static str) -> Ve
 /// diff on the right. Keys are listed in the frame title.
 fn render_git_panel(frame: &mut Frame, app: &mut App) {
     app.git_panel_diff();
-    let (Some(git), Some(panel)) = (&app.git, &mut app.git_panel) else {
+    let (Some(git), Some(panel)) = (&app.tab.git, &mut app.git_panel) else {
         return;
     };
     let screen = frame.area();
@@ -451,7 +451,7 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
     ])
     .areas(screen);
 
-    if app.term_mode == TermMode::Fullscreen {
+    if app.tab.term_mode == TermMode::Fullscreen {
         render_terminal(frame, app, top.union(body));
         render_status_bar(frame, app, status);
         return;
@@ -459,7 +459,7 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
     render_path_bar(frame, app, top);
 
     // F4 panel: full width under the files, like Dolphin.
-    let body = if app.term_mode == TermMode::Panel {
+    let body = if app.tab.term_mode == TermMode::Panel {
         let height = app
             .term_height
             .unwrap_or(body.height * 2 / 5)
@@ -488,12 +488,12 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
         let [side, main] =
             Layout::horizontal([Constraint::Length(sidebar::WIDTH + 2), Constraint::Fill(1)])
                 .areas(body);
-        let places_focused = app.focus == Focus::Places;
+        let places_focused = app.tab.focus == Focus::Places;
         let block = panel(tr(" Places "), places_focused);
         let places = block.inner(side).inner(Margin::new(0, 1));
         frame.render_widget(block, side);
         app.sidebar_area = places;
-        let mut sidebar = Sidebar::new(&app.sidebar, &app.cwd);
+        let mut sidebar = Sidebar::new(&app.sidebar, &app.tab.cwd);
         if places_focused {
             sidebar = sidebar.focused(app.sidebar_selected);
         }
@@ -511,8 +511,8 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
     } else {
         (main, None)
     };
-    let files_focused = app.focus == Focus::Files;
-    let title = match (&app.results, app.entry_count()) {
+    let files_focused = app.tab.focus == Focus::Files;
+    let title = match (&app.tab.results, app.entry_count()) {
         (Some(_), Some(n)) => trf(" Results · {} ", &[&format::items(n)]),
         (None, Some(n)) => format!(" {} · {} ", folder_name(app), format::items(n)),
         _ => format!(" {} ", folder_name(app)),
@@ -524,7 +524,7 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
     render_list(frame, app, main.inner(Margin::new(2, 1)));
     match preview_area {
         Some(area) => {
-            let focused = app.focus == Focus::Preview;
+            let focused = app.tab.focus == Focus::Preview;
             render_preview(frame, app, area, tr(" Preview "), focused)
         }
         None => app.preview.area = Rect::default(),
@@ -596,7 +596,8 @@ fn panel(title: &str, focused: bool) -> Block<'static> {
 }
 
 fn folder_name(app: &App) -> String {
-    app.cwd
+    app.tab
+        .cwd
         .file_name()
         .map_or_else(|| "/".to_string(), |n| n.to_string_lossy().into_owned())
 }
@@ -609,14 +610,14 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         Rect::new(area.x - 1, area.y - 1, area.width + 2, area.height + 2),
     );
     app.path_bar_area = area;
-    if let Some(results) = &app.results {
+    if let Some(results) = &app.tab.results {
         let accent = theme::accent();
         let line = Line::from(vec![
             Span::raw(" ⌕ ").fg(accent).bold(),
             Span::raw(results.command.clone()).fg(theme::fg()).bold(),
             Span::raw(trf(
                 "  ·  {} found in {}",
-                &[&format::items(results.count), &app.cwd.display()],
+                &[&format::items(results.count), &app.tab.cwd.display()],
             ))
             .fg(theme::dim()),
             Span::raw(tr("   Bksp/Esc back to the folder")).fg(theme::dim()),
@@ -631,7 +632,7 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // Git branch on the right: "⎇ main ↑1 ↓2" plus a count of changed files.
     // The path gets the rest of the row so the two never overlap.
     let mut path_area = area;
-    if let Some(git) = &app.git {
+    if let Some(git) = &app.tab.git {
         let changed = git.files.len();
         let text = if changed > 0 {
             trf(" ⎇ {} · {} changed  Ctrl+G ", &[&git.summary(), &changed])
@@ -655,36 +656,39 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
-    let message = match &app.listing {
+    let message = match &app.tab.listing {
         Listing::Loading => tr("Loading…").to_string(),
         Listing::Failed(err) => trf("Cannot open this folder: {}", &[err]),
         Listing::Ready(entries) if entries.is_empty() => tr("Folder is empty").to_string(),
-        Listing::Ready(_) if app.visible.is_empty() => trf("Nothing matches “{}”", &[&app.filter]),
+        Listing::Ready(_) if app.tab.visible.is_empty() => {
+            trf("Nothing matches “{}”", &[&app.tab.filter])
+        }
         Listing::Ready(entries) => {
             app.list_area = area;
             app.drawn_view = fitting_view(app.view, area);
-            // Borrow the fields directly (not through a method on `app`) so that `app.table`
+            // Borrow the fields directly (not through a method on `app`) so that `app.tab.table`
             // can be borrowed mutably while `entries` is borrowed immutably.
-            let rows = liman_widgets::Rows::ordered(entries, &app.visible);
-            let git_marks = app.git.as_ref().map(|g| &g.marks);
+            let rows = liman_widgets::Rows::ordered(entries, &app.tab.visible);
+            let git_marks = app.tab.git.as_ref().map(|g| &g.marks);
             match app.drawn_view.list_mode() {
                 Some(mode) => {
                     let mut list = FileList::new(rows, format::now(), mode)
-                        .marked(&app.marked)
+                        .marked(&app.tab.marked)
                         .sort(app.sort);
                     if let Some(marks) = git_marks {
                         list = list.git(marks);
                     }
-                    frame.render_stateful_widget(list, area, &mut app.table);
+                    frame.render_stateful_widget(list, area, &mut app.tab.table);
                 }
                 None => {
                     let wanted = app.grid_level.unwrap_or(grid::DEFAULT_LEVEL);
                     app.drawn_grid_level = grid::fitting_level(wanted, area);
-                    let mut grid = GridView::new(rows, app.drawn_grid_level).marked(&app.marked);
+                    let mut grid =
+                        GridView::new(rows, app.drawn_grid_level).marked(&app.tab.marked);
                     if let Some(marks) = git_marks {
                         grid = grid.git(marks);
                     }
-                    frame.render_stateful_widget(grid, area, &mut app.table);
+                    frame.render_stateful_widget(grid, area, &mut app.tab.table);
                 }
             }
             return;
@@ -702,13 +706,13 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
 /// Draws the shell's screen (vt100 cells) inside a rounded frame; blue frame = keys go to the shell.
 fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
     app.term_area = area;
-    let focused = app.focus == Focus::Terminal || app.term_mode == TermMode::Fullscreen;
+    let focused = app.tab.focus == Focus::Terminal || app.tab.term_mode == TermMode::Fullscreen;
     let accent = if focused {
         theme::accent()
     } else {
         theme::dim()
     };
-    let hint = match app.term_mode {
+    let hint = match app.tab.term_mode {
         TermMode::Fullscreen => tr(" Terminal · Ctrl+O back to files "),
         _ if focused => tr(
             " Terminal · Tab on empty line: next panel · Ctrl+↑↓ size · F4 close · Ctrl+O full screen ",
@@ -722,7 +726,7 @@ fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let Some(term) = &mut app.terminal else {
+    let Some(term) = &mut app.tab.terminal else {
         return;
     };
     term.resize(inner.height, inner.width);
@@ -814,11 +818,11 @@ const TERMINAL_HINTS: &[(&str, &str)] = &[
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = Vec::new();
-    if app.term_mode != TermMode::Hidden && app.focus == Focus::Terminal
-        || app.term_mode == TermMode::Fullscreen
+    if app.tab.term_mode != TermMode::Hidden && app.tab.focus == Focus::Terminal
+        || app.tab.term_mode == TermMode::Fullscreen
     {
         spans.push(Span::raw(" ⌂ ").fg(theme::dim()));
-        spans.push(Span::raw(app.cwd.display().to_string()).fg(theme::fg()));
+        spans.push(Span::raw(app.tab.cwd.display().to_string()).fg(theme::fg()));
         for (key, what) in TERMINAL_HINTS {
             spans.push(Span::raw(format!("  {key} ")).bold());
             spans.push(Span::raw(tr(what)).fg(theme::dim()));
@@ -876,9 +880,9 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         };
         spans.push(Span::raw(text).fg(theme::fg()).bold());
     }
-    if app.filter_editing || !app.filter.is_empty() {
+    if app.filter_editing || !app.tab.filter.is_empty() {
         spans.push(
-            Span::raw(format!(" /{}", app.filter))
+            Span::raw(format!(" /{}", app.tab.filter))
                 .fg(theme::fg())
                 .bold(),
         );
@@ -899,8 +903,8 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         let size = size.map(|s| format!(" ({s})")).unwrap_or_default();
         spans.push(Span::raw(trf(" | “{}” selected{}", &[&entry.name, &size])).fg(theme::dim()));
     }
-    if !app.marked.is_empty() {
-        spans.push(Span::raw(trf(" | {} marked", &[&app.marked.len()])).fg(theme::fg()));
+    if !app.tab.marked.is_empty() {
+        spans.push(Span::raw(trf(" | {} marked", &[&app.tab.marked.len()])).fg(theme::fg()));
     }
     if let Some(clip) = &app.clipboard {
         let template = match clip.mode {
@@ -918,7 +922,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(message) = &app.message {
         spans.push(Span::raw(format!("{message}  ")).fg(theme::fg()));
     }
-    let hints = if app.focus == Focus::Preview {
+    let hints = if app.tab.focus == Focus::Preview {
         PREVIEW_HINTS
     } else if app.filter_editing {
         FILTER_HINTS
@@ -1042,7 +1046,7 @@ mod tests {
     #[test]
     fn shows_entries_count_and_selection_when_ready() {
         let mut app = app("/home/test");
-        app.listing = Listing::Ready(vec![Entry {
+        app.tab.listing = Listing::Ready(vec![Entry {
             name: "main.rs".into(),
             path: PathBuf::from("main.rs"),
             is_dir: false,
@@ -1054,8 +1058,8 @@ mod tests {
             modified: None,
             file_type: FileType::Code,
         }]);
-        app.visible = vec![0];
-        app.table.select(Some(0));
+        app.tab.visible = vec![0];
+        app.tab.table.select(Some(0));
         let mut terminal = Terminal::new(TestBackend::new(140, 14)).unwrap();
         terminal.draw(|f| render(f, &mut app)).unwrap();
 

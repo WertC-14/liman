@@ -68,7 +68,7 @@ pub struct RenameInput {
 impl App {
     /// Marked entries in display order, or the selected one when nothing is marked.
     pub(super) fn targets(&self) -> Vec<PathBuf> {
-        if self.marked.is_empty() {
+        if self.tab.marked.is_empty() {
             return self
                 .selected_entry()
                 .map(|e| e.path.clone())
@@ -76,7 +76,7 @@ impl App {
                 .collect();
         }
         self.visible_entries()
-            .filter(|e| self.marked.contains(&e.path))
+            .filter(|e| self.tab.marked.contains(&e.path))
             .map(|e| e.path.clone())
             .collect()
     }
@@ -92,14 +92,14 @@ impl App {
         let Some(path) = self.selected_entry().map(|e| e.path.clone()) else {
             return;
         };
-        if !self.marked.remove(&path) {
-            self.marked.insert(path);
+        if !self.tab.marked.remove(&path) {
+            self.tab.marked.insert(path);
         }
-        self.click_anchor = self.table.selected();
+        self.click_anchor = self.tab.table.selected();
     }
 
     pub(super) fn mark_all(&mut self) {
-        self.marked = self.visible_entries().map(|e| e.path.clone()).collect();
+        self.tab.marked = self.visible_entries().map(|e| e.path.clone()).collect();
     }
 
     pub(super) fn copy_to_clipboard(&mut self, mode: ClipMode) {
@@ -113,7 +113,7 @@ impl App {
         };
         self.message = Some(trf(template, &[&liman_core::format::items(paths.len())]));
         self.clipboard = Some(Clipboard { mode, paths });
-        self.marked.clear();
+        self.tab.marked.clear();
     }
 
     /// Ctrl+V. If names already exist here, asks first (keep both / replace / skip).
@@ -125,7 +125,7 @@ impl App {
         let conflicts: Vec<PathBuf> = clip
             .paths
             .iter()
-            .filter_map(|src| existing_target(src, &self.cwd))
+            .filter_map(|src| existing_target(src, &self.tab.cwd))
             .collect();
         if conflicts.is_empty() {
             self.paste_with(Conflict::KeepBoth);
@@ -141,7 +141,7 @@ impl App {
         let Some(clip) = &self.clipboard else {
             return;
         };
-        let dest = self.cwd.clone();
+        let dest = self.tab.cwd.clone();
         let existing = |src: &PathBuf| existing_target(src, &dest);
         let mut sources = clip.paths.clone();
         let mut replaced = Vec::new();
@@ -190,7 +190,7 @@ impl App {
             )
         };
         if self.start_job(job, label) {
-            self.marked.clear();
+            self.tab.marked.clear();
         }
     }
 
@@ -226,7 +226,7 @@ impl App {
     }
 
     pub(super) fn trash_targets(&mut self) {
-        if self.cwd.starts_with(&self.trash_dir) {
+        if self.tab.cwd.starts_with(&self.trash_dir) {
             self.message = Some(tr("These items are already in the trash").into());
             return;
         }
@@ -326,10 +326,11 @@ impl App {
         let focus = outcome
             .done
             .focus()
-            .filter(|p| p.parent() == Some(self.cwd.as_path()))
+            .filter(|p| p.parent() == Some(self.tab.cwd.as_path()))
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned());
-        self.select_after_load = focus.or_else(|| self.selected_entry().map(|e| e.name.clone()));
+        self.tab.select_after_load =
+            focus.or_else(|| self.selected_entry().map(|e| e.name.clone()));
         if outcome.done.is_undoable() {
             self.history.push(outcome.done);
             if self.history.len() > MAX_UNDO {
@@ -337,8 +338,8 @@ impl App {
             }
         }
         // Read the folder again in place (no "Loading…" flash); in a results view, back to the folder.
-        if self.results.is_some() {
-            self.load(self.cwd.clone());
+        if self.tab.results.is_some() {
+            self.load(self.tab.cwd.clone());
         } else {
             self.refresh();
         }
@@ -395,7 +396,9 @@ mod tests {
     }
 
     fn loaded(app: &App) -> bool {
-        matches!(app.listing, Listing::Ready(_)) && app.job.is_none() && app.loading_path.is_none()
+        matches!(app.tab.listing, Listing::Ready(_))
+            && app.job.is_none()
+            && app.loading_path.is_none()
     }
 
     /// Temp home with a.txt, b.txt and dest/; the app shows it with a private trash.
@@ -414,7 +417,7 @@ mod tests {
 
     fn select(app: &mut App, name: &str) {
         let row = app.visible_entries().position(|e| e.name == name).unwrap();
-        app.table.select(Some(row));
+        app.tab.table.select(Some(row));
     }
 
     #[test]
@@ -440,9 +443,9 @@ mod tests {
         select(&mut app, "a.txt");
         press(&mut app, KeyCode::Char(' ')); // mark a.txt, cursor moves to b.txt
         press(&mut app, KeyCode::Char(' ')); // mark b.txt
-        assert_eq!(app.marked.len(), 2);
+        assert_eq!(app.tab.marked.len(), 2);
         ctrl(&mut app, 'x');
-        assert!(app.marked.is_empty());
+        assert!(app.tab.marked.is_empty());
         app.load(dir.join("dest"));
         pump(&mut app, &rx, loaded);
         ctrl(&mut app, 'v');
@@ -531,13 +534,13 @@ mod tests {
             bytes: b"\x1b[32m./a.txt\x1b[0m\r\n./b.txt\r\nnot a file\r\n".to_vec(),
         });
         pump(&mut app, &rx, loaded);
-        let results = app.results.clone().expect("results view");
+        let results = app.tab.results.clone().expect("results view");
         assert_eq!(results.count, 2);
         assert_eq!(app.visible_entry(0).unwrap().name, "a.txt");
 
         press(&mut app, KeyCode::Backspace); // back to the folder
         pump(&mut app, &rx, loaded);
-        assert!(app.results.is_none());
+        assert!(app.tab.results.is_none());
         assert_eq!(app.entry_count(), Some(3)); // a.txt, b.txt, dest/
 
         app.on_command_finished(crate::terminal::CommandOutput {
@@ -545,7 +548,7 @@ mod tests {
             cwd: dir.clone(),
             bytes: b"hi\r\n".to_vec(),
         });
-        assert!(app.results.is_none() && matches!(app.listing, Listing::Ready(_)));
+        assert!(app.tab.results.is_none() && matches!(app.tab.listing, Listing::Ready(_)));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -612,14 +615,14 @@ mod tests {
             4,
             KeyModifiers::SHIFT,
         )); // to b.txt
-        assert_eq!(app.marked.len(), 2);
+        assert_eq!(app.tab.marked.len(), 2);
         app.handle(mouse(
             MouseEventKind::Down(MouseButton::Left),
             10,
             4,
             KeyModifiers::CONTROL,
         )); // unmark b
-        assert_eq!(app.marked.len(), 1);
+        assert_eq!(app.tab.marked.len(), 1);
         // drag a.txt (marked) onto dest/
         app.handle(mouse(MouseEventKind::Down(MouseButton::Left), 10, 3, none));
         app.handle(mouse(MouseEventKind::Drag(MouseButton::Left), 12, 2, none));

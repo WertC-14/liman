@@ -12,32 +12,46 @@ use ratatui::widgets::TableState;
 use super::{App, Focus, Listing, Results, TermMode};
 use crate::terminal::Terminal;
 
-/// What belongs to one tab. When adding a field to `App`, decide: per tab (add it here too) or shared.
+/// What belongs to one tab. The active one is `App::tab`; the others wait in `Tabs`.
+/// When adding state to `App`, decide: per tab (here) or shared (`App`).
 pub struct TabState {
-    cwd: PathBuf,
-    listing: Listing,
-    visible: Vec<usize>,
-    table: TableState,
-    filter: String,
-    back_stack: Vec<PathBuf>,
-    forward_stack: Vec<PathBuf>,
-    remembered: HashMap<PathBuf, String>,
-    names_lower: Vec<String>,
-    visible_for: String,
-    marked: HashSet<PathBuf>,
-    results: Option<Results>,
-    terminal: Option<Terminal>,
-    term_mode: TermMode,
-    term_before_fullscreen: TermMode,
-    focus: Focus,
-    last_shell_cwd: Option<PathBuf>,
-    git: Option<liman_core::git::GitStatus>,
-    select_after_load: Option<String>,
+    pub cwd: PathBuf,
+    pub listing: Listing,
+    /// Indices into the `Ready` entries that pass the filter, in display order.
+    pub visible: Vec<usize>,
+    /// Selected row (index into `visible`) and scroll offset; kept between frames.
+    pub table: TableState,
+    /// Case-insensitive substring filter typed after `/`.
+    pub filter: String,
+    /// Folders visited before / after the current one (Ctrl+← / Ctrl+→).
+    pub back_stack: Vec<PathBuf>,
+    pub forward_stack: Vec<PathBuf>,
+    /// Last selected entry per folder, restored when coming back.
+    pub remembered: HashMap<PathBuf, String>,
+    /// Lower-case entry names, made once per listing for the filter.
+    pub names_lower: Vec<String>,
+    /// The (lower-case) filter `visible` was computed for.
+    pub visible_for: String,
+    /// Entries marked with Space (or Ctrl+A) for a multi-item operation.
+    pub marked: HashSet<PathBuf>,
+    /// Set while the view shows files found by a shell command instead of a folder.
+    pub results: Option<Results>,
+    /// The embedded shell, started on first F4 / Ctrl+O and kept running while hidden.
+    pub terminal: Option<Terminal>,
+    pub term_mode: TermMode,
+    pub term_before_fullscreen: TermMode,
+    pub focus: Focus,
+    /// The shell's folder as last seen, so each `cd` in the shell is followed once.
+    pub last_shell_cwd: Option<PathBuf>,
+    /// Git status of the repository around the open folder (None outside one).
+    pub git: Option<liman_core::git::GitStatus>,
+    /// After going up a level, the folder we came from gets selected.
+    pub select_after_load: Option<String>,
 }
 
 impl TabState {
     /// A new tab showing `cwd` (listed when it becomes active).
-    fn fresh(cwd: PathBuf) -> Self {
+    pub fn fresh(cwd: PathBuf) -> Self {
         Self {
             cwd,
             listing: Listing::Loading,
@@ -110,8 +124,8 @@ impl App {
                     active: false,
                 },
                 None => TabLabel {
-                    title: tab_title(&self.cwd, home),
-                    has_shell: self.terminal.is_some(),
+                    title: tab_title(&self.tab.cwd, home),
+                    has_shell: self.tab.terminal.is_some(),
                     active: true,
                 },
             })
@@ -128,7 +142,7 @@ impl App {
         self.tabs.slots[at] = Some(parked);
         self.tabs.slots.insert(at + 1, None);
         self.tabs.active = at + 1;
-        let fresh = TabState::fresh(self.cwd.clone());
+        let fresh = TabState::fresh(self.tab.cwd.clone());
         self.unpark(fresh);
     }
 
@@ -184,54 +198,16 @@ impl App {
         self.switch_tab(to);
     }
 
-    /// Takes the active tab's state out of `App` (leaving empty values behind).
+    /// Takes the active tab's state out of `App` (a fresh tab in the same folder stays behind).
     fn park(&mut self) -> TabState {
-        use std::mem::{replace, take};
-        TabState {
-            cwd: self.cwd.clone(),
-            listing: replace(&mut self.listing, Listing::Loading),
-            visible: take(&mut self.visible),
-            table: take(&mut self.table),
-            filter: take(&mut self.filter),
-            back_stack: take(&mut self.back_stack),
-            forward_stack: take(&mut self.forward_stack),
-            remembered: take(&mut self.remembered),
-            names_lower: take(&mut self.names_lower),
-            visible_for: take(&mut self.visible_for),
-            marked: take(&mut self.marked),
-            results: self.results.take(),
-            terminal: self.terminal.take(),
-            term_mode: replace(&mut self.term_mode, TermMode::Hidden),
-            term_before_fullscreen: replace(&mut self.term_before_fullscreen, TermMode::Hidden),
-            focus: replace(&mut self.focus, Focus::Files),
-            last_shell_cwd: self.last_shell_cwd.take(),
-            git: self.git.take(),
-            select_after_load: self.select_after_load.take(),
-        }
+        let cwd = self.tab.cwd.clone();
+        std::mem::replace(&mut self.tab, TabState::fresh(cwd))
     }
 
-    /// Makes `t` the active tab: its fields go into `App`, work in flight for the old tab is
-    /// dropped (new generation) and the folder is read again in place.
+    /// Makes `t` the active tab; work in flight for the old tab is dropped (new generation) and
+    /// the folder is read again in place.
     fn unpark(&mut self, t: TabState) {
-        self.cwd = t.cwd;
-        self.listing = t.listing;
-        self.visible = t.visible;
-        self.table = t.table;
-        self.filter = t.filter;
-        self.back_stack = t.back_stack;
-        self.forward_stack = t.forward_stack;
-        self.remembered = t.remembered;
-        self.names_lower = t.names_lower;
-        self.visible_for = t.visible_for;
-        self.marked = t.marked;
-        self.results = t.results;
-        self.terminal = t.terminal;
-        self.term_mode = t.term_mode;
-        self.term_before_fullscreen = t.term_before_fullscreen;
-        self.focus = t.focus;
-        self.last_shell_cwd = t.last_shell_cwd;
-        self.git = t.git;
-        self.select_after_load = t.select_after_load;
+        self.tab = t;
 
         // Things that belonged to the moment, not to the tab.
         self.loading_path = None;
@@ -249,11 +225,11 @@ impl App {
         self.drag = None;
         self.dirty = true;
 
-        if matches!(self.listing, Listing::Loading) {
-            self.load(self.cwd.clone());
-        } else if self.results.is_none() {
+        if matches!(self.tab.listing, Listing::Loading) {
+            self.load(self.tab.cwd.clone());
+        } else if self.tab.results.is_none() {
             self.refresh(); // new generation: listings for the old tab are ignored
-            self.watch.watch(&self.cwd.clone());
+            self.watch.watch(&self.tab.cwd.clone());
         } else {
             self.generation += 1;
             self.current_generation
@@ -343,7 +319,7 @@ mod tests {
     }
 
     fn settle(app: &mut App, rx: &Receiver<AppEvent>) {
-        while !matches!(app.listing, Listing::Ready(_)) || app.loading_path.is_some() {
+        while !matches!(app.tab.listing, Listing::Ready(_)) || app.loading_path.is_some() {
             app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
         }
     }
@@ -363,22 +339,22 @@ mod tests {
         settle(&mut app, &rx);
         press(&mut app, KeyCode::Enter, KeyModifiers::NONE); // into "sub" in tab 2
         settle(&mut app, &rx);
-        assert_eq!(app.cwd, dir.join("sub"));
+        assert_eq!(app.tab.cwd, dir.join("sub"));
         let labels = app.tab_labels();
         assert_eq!(labels.len(), 2);
         assert!(labels[1].active && labels[1].title == "sub");
 
         press(&mut app, KeyCode::Char('1'), KeyModifiers::ALT);
         settle(&mut app, &rx);
-        assert_eq!(app.cwd, dir);
+        assert_eq!(app.tab.cwd, dir);
         press(&mut app, KeyCode::Char('2'), KeyModifiers::ALT);
         settle(&mut app, &rx);
-        assert_eq!(app.cwd, dir.join("sub"));
+        assert_eq!(app.tab.cwd, dir.join("sub"));
         assert_eq!(app.selected_entry().unwrap().name, "inner.txt");
 
         press(&mut app, KeyCode::Char('w'), KeyModifiers::CONTROL);
         settle(&mut app, &rx);
-        assert_eq!(app.cwd, dir);
+        assert_eq!(app.tab.cwd, dir);
         assert!(app.tab_labels().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -401,6 +377,6 @@ mod middle_click_tests {
         assert_eq!(labels.len(), 2);
         assert!(labels[0].active, "the user stays in the first tab");
         assert_eq!(labels[1].title, "usr");
-        assert_eq!(app.cwd, dir);
+        assert_eq!(app.tab.cwd, dir);
     }
 }

@@ -381,10 +381,10 @@ impl App {
             Action::Open => self.activate_selected(),
             Action::PathsToTerminal => self.paths_to_terminal(),
             Action::OpenTerminalHere => {
-                if self.term_mode == TermMode::Hidden {
+                if self.tab.term_mode == TermMode::Hidden {
                     self.toggle_panel();
                 } else {
-                    self.focus = super::Focus::Terminal;
+                    self.tab.focus = super::Focus::Terminal;
                 }
             }
             Action::Copy => self.copy_to_clipboard(super::ClipMode::Copy),
@@ -446,11 +446,11 @@ impl App {
 
     /// Ctrl+N: a new folder here; it is selected and its name opens for editing.
     pub(super) fn new_folder(&mut self) {
-        if self.results.is_some() || !matches!(self.listing, Listing::Ready(_)) {
+        if self.tab.results.is_some() || !matches!(self.tab.listing, Listing::Ready(_)) {
             return;
         }
         let job = Job::CreateDir {
-            parent: self.cwd.clone(),
+            parent: self.tab.cwd.clone(),
             name: tr("New folder").into(),
         };
         if self.start_job(job, tr("Creating a folder").into()) {
@@ -493,17 +493,17 @@ impl App {
             | Action::PathsToTerminal => has_entry,
             Action::Paste => self.clipboard.is_some(),
             Action::Undo => !self.history.is_empty(),
-            Action::Back => !self.back_stack.is_empty(),
-            Action::Forward => !self.forward_stack.is_empty(),
-            Action::NewFolder => self.results.is_none(),
+            Action::Back => !self.tab.back_stack.is_empty(),
+            Action::Forward => !self.tab.forward_stack.is_empty(),
+            Action::NewFolder => self.tab.results.is_none(),
             Action::GitStage | Action::GitUnstage | Action::GitDiscard => {
-                self.git.is_some() && has_entry
+                self.tab.git.is_some() && has_entry
             }
             Action::GitPanel
             | Action::GitCommit
             | Action::GitPush
             | Action::GitPull
-            | Action::GitBranch => self.git.is_some(),
+            | Action::GitBranch => self.tab.git.is_some(),
             Action::ZoomIn => {
                 self.view != View::Grid
                     || self.drawn_grid_level + 1 < liman_widgets::grid::BOX_SIZES.len()
