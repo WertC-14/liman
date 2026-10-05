@@ -5,6 +5,9 @@ sürüklenir; ama SSH ve tmux içinde de çalışır ve altında gerçek bir ter
 
 ![liman açılış ekranı](img/01-acilis.png)
 
+> Bu kılavuzdaki ekran görüntüleri uydurma bir ev klasöründe (`/tmp/liman-demo`) otomatik çekilir:
+> `python3 fm-research/research/spikes/ekran/cek.py` hepsini yeniden üretir.
+
 İçindekiler:
 [Kurulum ve açma](#kurulum-ve-açma) ·
 [Ekranın parçaları](#ekranın-parçaları) ·
@@ -63,6 +66,7 @@ gezdirir; kapalı paneller atlanır (Tab terminali ya da önizlemeyi açmaz).
 ![Ayrıntılı görünüm](img/04-ayrintili.png)
 
 - **+ / -** ya da **Ctrl+tekerlek** kutu boyutunu değiştirir; pencere küçülünce liman sığan en büyük görünüme kendisi geçer.
+- **Ayrıntılı** görünüm dar bir panelde (ör. önizleme açıkken) adlara yer açmak için önce Değiştirme, sonra Tür sütununu gizler.
 - **Ayrıntılı** görünümde sütun başlığına tıklamak o sütuna göre sıralar, tekrar tıklamak ters çevirir. Klavyede **s** (sonraki
   sütun) ve **S** (ters). Sıralama hatırlanır.
 - **Ctrl+H** ya da **.** gizli dosyaları gösterir/gizler (hatırlanır).
@@ -143,6 +147,8 @@ Alt+Enter işaretlilerin hepsine uygulanır; hiçbiri işaretli değilse imlecin
 | resim (png, jpg, gif, webp) | resmin kendisi, terminal hücreleriyle |
 | PDF | metni (`pdftotext` kuruluysa) |
 | arşiv (zip, tar.gz...) | içindekiler (`unzip` / `tar` kuruluysa) |
+
+![Önizleme paneli: resim](img/17-onizleme-resim.png)
 
 - Panel açıkken **Tab** ile önizlemeye geç: **↑↓ / j k** satır, **PgUp/PgDn** ya da **Space** sayfa, **g / G** baş / son.
   Çizginin sağında hangi satırları gördüğün yazar (`12–40 / 300`).
