@@ -315,9 +315,11 @@ impl App {
                 tab.terminal = None;
                 tab.term_mode = TermMode::Hidden;
                 tab.focus = Focus::Files;
+                self.dirty = true; // the ● on the chip goes away
             }
         }
-        self.dirty = true; // the ● on the chip may change
+        // Output of a hidden shell changes nothing on screen: no redraw (a build running in a
+        // background tab would otherwise cost 60 frames a second).
     }
 }
 
