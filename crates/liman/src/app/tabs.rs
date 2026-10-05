@@ -217,6 +217,7 @@ impl App {
         self.filter_editing = false;
         self.rename = None;
         self.search_input = None;
+        self.path_input = None;
         self.commit_input = None;
         self.git_panel = None;
         self.branch_picker = None;

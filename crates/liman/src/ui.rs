@@ -610,6 +610,19 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         Rect::new(area.x - 1, area.y - 1, area.width + 2, area.height + 2),
     );
     app.path_bar_area = area;
+    if let Some(text) = &app.path_input {
+        let line = Line::from(vec![
+            Span::raw(" ➜ ").fg(theme::accent()).bold(),
+            Span::raw(text.as_str()).fg(theme::fg()).bold(),
+            Span::raw("▏").fg(theme::fg()),
+            Span::raw(tr("   Tab complete · Enter go · Esc cancel")).fg(theme::dim()),
+        ]);
+        frame.render_widget(
+            Paragraph::new(line).style(Style::new().bg(theme::bar_bg())),
+            area,
+        );
+        return;
+    }
     if let Some(results) = &app.tab.results {
         let accent = theme::accent();
         let line = Line::from(vec![

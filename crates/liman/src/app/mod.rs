@@ -176,6 +176,8 @@ pub struct App {
     pub dialog: Option<Dialog>,
     /// Ctrl+F: the search text being typed.
     pub search_input: Option<String>,
+    /// Ctrl+L: a path being typed into the path bar.
+    pub path_input: Option<String>,
     /// Newest listing/search id, shared with search workers so old searches stop early.
     current_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// `t`: the theme list (selected row, theme to go back to on Esc).
@@ -229,6 +231,7 @@ impl App {
             drag: None,
             theme_picker: None,
             search_input: None,
+            path_input: None,
             dialog: None,
             watch: crate::watch::FolderWatch::start(tx.clone()),
             git_busy: false,
@@ -466,9 +469,12 @@ impl App {
             }
             // Tab / Shift+Tab move between Places, Files and the terminal panel. In the terminal,
             // Tab completes while there is text on the command line.
+            // While a path is typed, Tab completes it instead.
             KeyCode::Tab
-                if !self.terminal_has_focus()
-                    || (self.tab.term_mode == TermMode::Panel && self.terminal_line_empty()) =>
+                if self.path_input.is_none()
+                    && (!self.terminal_has_focus()
+                        || (self.tab.term_mode == TermMode::Panel
+                            && self.terminal_line_empty())) =>
             {
                 return self.focus_next();
             }
@@ -514,6 +520,9 @@ impl App {
         }
         if self.search_input.is_some() {
             return self.on_search_key(key);
+        }
+        if self.path_input.is_some() {
+            return self.on_path_key(key);
         }
         if self.filter_editing {
             self.on_filter_key(key);
@@ -1362,6 +1371,53 @@ impl App {
         }
     }
 
+    /// Ctrl+L: the path bar becomes a text field with the current folder.
+    pub(super) fn begin_path_input(&mut self) {
+        // Under the home folder the path starts with `~/`, like in a shell.
+        let mut text = match self.tab.cwd.strip_prefix(&self.places.home) {
+            Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => self.tab.cwd.display().to_string(),
+        };
+        if !text.ends_with('/') {
+            text.push('/');
+        }
+        self.path_input = Some(text);
+    }
+
+    fn on_path_key(&mut self, key: KeyEvent) {
+        use liman_core::path_input;
+        let Some(text) = &mut self.path_input else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => self.path_input = None,
+            KeyCode::Backspace => {
+                text.pop();
+            }
+            KeyCode::Tab => {
+                if let Some(done) = path_input::complete(text, &self.tab.cwd, &self.places.home) {
+                    *text = done;
+                }
+            }
+            KeyCode::Char(c) if is_typing(key) => text.push(c),
+            KeyCode::Enter => {
+                let typed = self.path_input.take().unwrap_or_default();
+                let path = path_input::resolve(&typed, &self.tab.cwd, &self.places.home);
+                // A file opens its folder with the file selected.
+                match (path.is_dir(), path.parent(), path.file_name()) {
+                    (true, _, _) => self.load(path),
+                    (false, Some(dir), Some(name)) if path.exists() => {
+                        self.tab.select_after_load = Some(name.to_string_lossy().into_owned());
+                        self.load(dir.to_path_buf());
+                    }
+                    _ => self.message = Some(trf("No such file or folder: {}", &[&typed])),
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn go_back(&mut self) {
         if let Some(path) = self.tab.back_stack.pop() {
             self.tab.forward_stack.push(self.tab.cwd.clone());
@@ -2171,6 +2227,30 @@ mod tests {
         });
         app.handle(key(KeyCode::F(2)));
         assert_eq!(app.rename.as_ref().map(|r| r.text.as_str()), Some("a.rs"));
+    }
+
+    #[test]
+    fn ctrl_l_types_a_path_and_enter_goes_there() {
+        let (mut app, _rx) = app();
+        let ctrl_l = AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::CONTROL,
+        )));
+        app.handle(ctrl_l);
+        assert_eq!(app.path_input.as_deref(), Some("~/")); // /data is home in these tests
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(app.path_input, None);
+        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::CONTROL,
+        ))));
+        for _ in 0.."~/".len() {
+            app.handle(key(KeyCode::Backspace));
+        }
+        app.handle(key(KeyCode::Char('/')));
+        app.handle(key(KeyCode::Enter)); // "/" is a folder everywhere
+        assert_eq!(app.path_input, None);
+        assert_eq!(app.loading_path.as_deref(), Some(Path::new("/")));
     }
 
     #[test]

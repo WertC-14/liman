@@ -37,6 +37,7 @@ pub enum Action {
     Forward,
     Up,
     Home,
+    GoTo,
     Recent,
     NewTab,
     CloseTab,
@@ -59,7 +60,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 45] = [
+    pub const ALL: [Action; 46] = [
         Self::GitPanel,
         Self::GitStage,
         Self::GitUnstage,
@@ -94,6 +95,7 @@ impl Action {
         Self::Forward,
         Self::Up,
         Self::Home,
+        Self::GoTo,
         Self::Recent,
         Self::NewTab,
         Self::CloseTab,
@@ -168,6 +170,7 @@ impl Action {
             Self::Forward => "Forward",
             Self::Up => "Parent folder",
             Self::Home => "Home",
+            Self::GoTo => "Go to path…",
             Self::Recent => "Recent files",
             Self::NewTab => "New tab",
             Self::CloseTab => "Close tab",
@@ -218,6 +221,7 @@ impl Action {
             Self::Forward => "Ctrl+→",
             Self::Up => "Bksp / Alt+↑",
             Self::Home => "~",
+            Self::GoTo => "Ctrl+L",
             Self::Recent => "",
             Self::NewTab => "Ctrl+T",
             Self::CloseTab => "Ctrl+W",
@@ -269,6 +273,7 @@ pub fn for_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('f') if ctrl => Action::Search,
         KeyCode::Char('d') if ctrl => Action::Bookmark,
         KeyCode::Char('g') if ctrl => Action::GitPanel,
+        KeyCode::Char('l') if ctrl => Action::GoTo,
         // Ctrl+Shift+N / Ctrl+Shift+C arrive as Ctrl+N / Ctrl+C in most terminals: Ctrl+N, Alt+C.
         KeyCode::Char('n') if ctrl => Action::NewFolder,
         KeyCode::Char('c') if alt => Action::CopyPath,
@@ -318,6 +323,7 @@ pub const HELP: &[Help] = &[
     Help::Action(Action::Back),
     Help::Action(Action::Forward),
     Help::Action(Action::Home),
+    Help::Action(Action::GoTo),
     Help::Keys("Tab / Shift+Tab", "Places · Files · Preview · Terminal"),
     Help::Action(Action::SmallLarge),
     Help::Action(Action::ZoomIn),
@@ -422,6 +428,7 @@ impl App {
             Action::Forward => self.go_forward(),
             Action::Up => self.go_up(),
             Action::Home => self.load(self.places.home.clone()),
+            Action::GoTo => self.begin_path_input(),
             Action::Recent => self.show_recent(),
             Action::NewTab => self.new_tab(),
             Action::CloseTab => self.close_tab(),
