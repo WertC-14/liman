@@ -12,6 +12,7 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
+use crate::badge;
 use crate::highlight;
 use crate::theme;
 
@@ -83,12 +84,10 @@ fn header(p: &Preview, position: Option<(usize, usize, usize)>, area: Rect, buf:
         .path
         .file_name()
         .map_or_else(|| p.path.to_string_lossy(), |n| n.to_string_lossy());
+    let extension = p.path.extension().and_then(|e| e.to_str());
     let badge = match p.file_type {
         FileType::Folder => "▸".to_string(),
-        _ => p.path.extension().and_then(|e| e.to_str()).map_or_else(
-            || "·".into(),
-            |e| e.chars().take(5).collect::<String>().to_uppercase(),
-        ),
+        _ => extension.map_or_else(|| "·".into(), badge::extension_label),
     };
     let title = Line::from(vec![
         Span::raw(format!(" {badge} "))
@@ -98,7 +97,10 @@ fn header(p: &Preview, position: Option<(usize, usize, usize)>, area: Rect, buf:
         Span::raw(" "),
         Span::raw(name.into_owned()).fg(theme::fg()).bold(),
     ]);
-    let mut details = vec![type_label(p)];
+    let mut details = vec![badge::type_label(
+        extension,
+        p.file_type == FileType::Folder,
+    )];
     if p.file_type != FileType::Folder {
         details.push(format::size(p.size));
     }
@@ -127,20 +129,6 @@ fn header(p: &Preview, position: Option<(usize, usize, usize)>, area: Rect, buf:
         ];
     }
     Paragraph::new(Line::from(rule)).render(rows(2), buf);
-}
-
-/// "PDF file", "Folder", "File".
-fn type_label(p: &Preview) -> String {
-    if p.file_type == FileType::Folder {
-        return tr("Folder").into();
-    }
-    match p.path.extension().and_then(|e| e.to_str()) {
-        Some(ext) if !ext.is_empty() => trf(
-            "{} file",
-            &[&ext.chars().take(5).collect::<String>().to_uppercase()],
-        ),
-        _ => tr("File").into(),
-    }
 }
 
 /// Highlighted, wrapped text with line numbers. Returns (first line, last line, total) shown.

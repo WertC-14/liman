@@ -6,7 +6,7 @@
 //! It is a `StatefulWidget`: the caller keeps a `TableState` (selected row, scroll offset)
 //! between frames, the widget itself is rebuilt every frame.
 
-use liman_core::i18n::{tr, trf};
+use liman_core::i18n::tr;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -20,6 +20,7 @@ use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Row, StatefulWidget, Table, TableState};
 
+use crate::badge;
 use crate::boxes;
 use crate::gitmark;
 use crate::rows::Rows;
@@ -233,7 +234,10 @@ impl<'a> FileList<'a> {
         if let Some(marks) = self.git {
             spans.extend(gitmark::spans(marks.get(&entry.path).copied()));
         }
-        spans.push(Span::raw(type_text(entry)).fg(theme::entry_color(entry)));
+        spans.push(
+            Span::raw(badge::type_label(entry.extension(), entry.is_dir))
+                .fg(theme::entry_color(entry)),
+        );
         Line::from(spans)
     }
 
@@ -410,19 +414,6 @@ mod window_tests {
 }
 
 /// "Folder", "PDF file", "File" (no extension).
-fn type_text(entry: &Entry) -> String {
-    if entry.is_dir {
-        return tr("Folder").into();
-    }
-    match entry.extension() {
-        Some(ext) => trf(
-            "{} file",
-            &[&ext.chars().take(5).collect::<String>().to_uppercase()],
-        ),
-        None => tr("File").into(),
-    }
-}
-
 fn size_text(entry: &Entry) -> String {
     if entry.is_dir {
         entry.item_count.map_or_else(|| "—".into(), format::items)

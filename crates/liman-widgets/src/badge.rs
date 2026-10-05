@@ -1,6 +1,7 @@
 //! One-line type badge for the detailed view (ADR 0003): ` PDF `, ` RS `, ` ▸ ` for folders.
 
 use liman_core::Entry;
+use liman_core::i18n::{tr, trf};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 
@@ -18,9 +19,27 @@ pub fn label(entry: &Entry) -> String {
     if entry.is_dir {
         return "▸".into();
     }
-    match entry.extension() {
-        Some(ext) => ext.chars().take(4).collect::<String>().to_uppercase(),
-        None => "·".into(),
+    entry
+        .extension()
+        .map_or_else(|| "·".into(), extension_label)
+}
+
+/// An extension as a badge: upper case, at most 4 characters (`PDF`, `RS`, `JSON`).
+pub fn extension_label(ext: &str) -> String {
+    ext.chars().take(4).collect::<String>().to_uppercase()
+}
+
+/// The type in words, for the Type column and the preview: "PDF file", "Folder", "File".
+pub fn type_label(extension: Option<&str>, is_dir: bool) -> String {
+    if is_dir {
+        return tr("Folder").into();
+    }
+    match extension.filter(|e| !e.is_empty()) {
+        Some(ext) => trf(
+            "{} file",
+            &[&ext.chars().take(5).collect::<String>().to_uppercase()],
+        ),
+        None => tr("File").into(),
     }
 }
 
