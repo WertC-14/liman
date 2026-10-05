@@ -341,6 +341,16 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         // status bar hints and the help window (keys, then what they do)
         "theme" => "tema",
         "keep" => "vazgeç",
+        "“{}” is protected: it cannot be removed or moved" => {
+            "“{}” korunuyor: silinemez, taşınamaz"
+        }
+        "Move {} and the {} inside to the trash?" => "{} ve içindeki {} çöpe taşınsın mı?",
+        "Move {} to the trash?" => "{} çöpe taşınsın mı?",
+        "It can be brought back with Ctrl+Z or from the Trash." => {
+            "Ctrl+Z ile ya da Çöp'ten geri getirilebilir."
+        }
+        " Trash " => " Çöp ",
+        "trash   " => "çöpe at   ",
         "QUICK ACCESS" => "HIZLI ERİŞİM",
         "FOLDERS" => "KLASÖRLER",
         "Permissions" => "İzinler",

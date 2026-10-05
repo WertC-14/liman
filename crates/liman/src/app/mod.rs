@@ -744,6 +744,9 @@ impl App {
             }
         }
         if let Some(i) = self.sidebar_row_at(column, row) {
+            // Keys go where you clicked: Del then means the sidebar item, never the selected
+            // file in the list (a Del meant for the sidebar trashed ~/Projects).
+            self.tab.focus = Focus::Places;
             self.on_sidebar_click(i, column);
             return;
         }
@@ -945,7 +948,25 @@ impl App {
         } else {
             vec![dragged]
         };
+        if !copy && let Some(path) = sources.iter().find(|p| self.is_protected(p)) {
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            self.message = Some(trf(
+                "“{}” is protected: it cannot be removed or moved",
+                &[&name],
+            ));
+            return;
+        }
         match self.folder_at(column, row) {
+            // Dropped on Trash: a real (confirmed, undoable) trash, not a plain move into it.
+            Some(dest) if dest.starts_with(&self.trash_dir) => {
+                self.dialog = Some(Dialog::ConfirmTrash {
+                    paths: sources,
+                    inside: None,
+                });
+            }
             Some(dest)
                 if !sources.contains(&dest) && !sources.iter().any(|s| dest.starts_with(s)) =>
             {
@@ -1082,6 +1103,7 @@ impl App {
             SideItem::Place(i) => self.open_place(i),
             SideItem::Dir(d) => {
                 self.sidebar_selected = row;
+
                 let dir = self.tree.rows()[d].clone();
                 if column == Sidebar::arrow_column(self.sidebar_area, dir.depth) {
                     if dir.expanded {

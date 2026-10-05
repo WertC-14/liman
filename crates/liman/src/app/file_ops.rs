@@ -53,6 +53,12 @@ pub enum Dialog {
     ConfirmDelete {
         paths: Vec<PathBuf>,
     },
+    /// Del asks too (the user lost ~/Projects to a Del meant for the sidebar, LOG 2026-10-05).
+    ConfirmTrash {
+        paths: Vec<PathBuf>,
+        /// What is inside, when one folder goes: "17 items".
+        inside: Option<String>,
+    },
     /// Throw away uncommitted changes (git restore; untracked files to the trash).
     ConfirmDiscard {
         paths: Vec<PathBuf>,
@@ -103,7 +109,10 @@ impl App {
     }
 
     pub(super) fn copy_to_clipboard(&mut self, mode: ClipMode) {
-        let paths = self.targets();
+        let paths = match mode {
+            ClipMode::Copy => self.targets(),
+            ClipMode::Cut => self.removable_targets().unwrap_or_default(),
+        };
         if paths.is_empty() {
             return;
         }
@@ -196,8 +205,7 @@ impl App {
 
     /// Shift+Del: asks before deleting for good.
     pub(super) fn ask_delete(&mut self) {
-        let paths = self.targets();
-        if !paths.is_empty() {
+        if let Some(paths) = self.removable_targets() {
             self.dialog = Some(Dialog::ConfirmDelete { paths });
         }
     }
@@ -220,29 +228,73 @@ impl App {
                 self.start_job(Job::Delete { paths }, label);
             }
             (Dialog::ConfirmDiscard { paths }, KeyCode::Char('y')) => self.git_discard(paths),
+            (Dialog::ConfirmTrash { paths, .. }, KeyCode::Char('y')) => {
+                let label = trf(
+                    "Moving {} to the trash",
+                    &[&liman_core::format::items(paths.len())],
+                );
+                self.start_job(Job::Trash { paths }, label);
+            }
             (_, KeyCode::Esc | KeyCode::Char('n' | 'q')) => {}
             (dialog, _) => self.dialog = Some(dialog), // other keys: keep asking
         }
     }
 
+    /// Del: asks first, then moves the marked (or selected) items to the trash.
     pub(super) fn trash_targets(&mut self) {
         if self.tab.cwd.starts_with(&self.trash_dir) {
             self.message = Some(tr("These items are already in the trash").into());
             return;
         }
-        let paths = self.targets();
-        if paths.is_empty() {
+        let Some(paths) = self.removable_targets() else {
             return;
+        };
+        let inside = match paths.as_slice() {
+            [one] => self
+                .visible_entries()
+                .find(|e| e.path == *one && e.is_dir)
+                .and_then(|e| e.item_count)
+                .map(liman_core::format::items),
+            _ => None,
+        };
+        self.dialog = Some(Dialog::ConfirmTrash { paths, inside });
+    }
+
+    /// The targets of an action that removes or moves them away (trash, delete, cut, move,
+    /// rename), unless one of them is protected: then a message and `None`.
+    pub(super) fn removable_targets(&mut self) -> Option<Vec<PathBuf>> {
+        let paths = self.targets();
+        if let Some(path) = paths.iter().find(|p| self.is_protected(p)) {
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            self.message = Some(trf(
+                "“{}” is protected: it cannot be removed or moved",
+                &[&name],
+            ));
+            return None;
         }
-        let label = trf(
-            "Moving {} to the trash",
-            &[&liman_core::format::items(paths.len())],
-        );
-        self.start_job(Job::Trash { paths }, label);
+        (!paths.is_empty()).then_some(paths)
+    }
+
+    /// The root, the home folder and the folders above it, and well-known folders (Desktop,
+    /// Documents, Downloads, ..., the trash) are never removed, moved or renamed by liman.
+    pub(super) fn is_protected(&self, path: &Path) -> bool {
+        path.parent().is_none()
+            || self.places.home.starts_with(path)
+            || self.places.kind_of(path).is_some()
     }
 
     pub(super) fn begin_rename(&mut self) {
         if let Some(entry) = self.selected_entry() {
+            if self.is_protected(&entry.path) {
+                self.message = Some(trf(
+                    "“{}” is protected: it cannot be removed or moved",
+                    &[&entry.name],
+                ));
+                return;
+            }
             // The file name, not `entry.name`: in a results view that is a path like `src/a.rs`.
             let text = entry
                 .path
@@ -457,10 +509,34 @@ mod tests {
     }
 
     #[test]
+    fn home_and_well_known_folders_cannot_be_removed() {
+        let (dir, mut app, _rx) = setup("protected");
+        // The test home is `dir`: it and the folders above it are protected, others are not.
+        assert!(app.is_protected(&dir));
+        assert!(app.is_protected(Path::new("/")));
+        assert!(!app.is_protected(&dir.join("a.txt")));
+        app.places = liman_core::Places::from_user_dirs(
+            &format!("XDG_DOWNLOAD_DIR=\"{}/a.txt\"", dir.display()),
+            &dir,
+        );
+        select(&mut app, "a.txt"); // pretend it is the Downloads folder
+        press(&mut app, KeyCode::Delete);
+        assert!(app.dialog.is_none());
+        assert!(app.message.as_deref().unwrap().contains("protected"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn delete_moves_to_trash_and_f2_renames() {
         let (dir, mut app, rx) = setup("trash");
         select(&mut app, "a.txt");
         press(&mut app, KeyCode::Delete);
+        // Del asks first; n keeps the file.
+        assert!(matches!(app.dialog, Some(Dialog::ConfirmTrash { .. })));
+        press(&mut app, KeyCode::Char('n'));
+        assert!(app.dialog.is_none() && dir.join("a.txt").exists());
+        press(&mut app, KeyCode::Delete);
+        press(&mut app, KeyCode::Char('y'));
         pump(&mut app, &rx, loaded);
         assert!(!dir.join("a.txt").exists());
         assert!(dir.join(".trash/files/a.txt").exists());
@@ -506,6 +582,7 @@ mod tests {
         pump(&mut app, &rx, loaded);
         select(&mut app, "b.txt");
         press(&mut app, KeyCode::Delete);
+        press(&mut app, KeyCode::Char('y'));
         pump(&mut app, &rx, loaded);
         assert!(!dir.join("b.txt").exists());
 

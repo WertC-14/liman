@@ -127,6 +127,23 @@ fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
                 confirm_lines(question, note, "discard   "),
             )
         }
+        Dialog::ConfirmTrash { paths, inside } => {
+            let what = match paths.as_slice() {
+                [one] => format!(
+                    "“{}”",
+                    one.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                ),
+                many => format::items(many.len()),
+            };
+            let question = match inside {
+                Some(inside) => trf("Move {} and the {} inside to the trash?", &[&what, inside]),
+                None => trf("Move {} to the trash?", &[&what]),
+            };
+            let note = "It can be brought back with Ctrl+Z or from the Trash.";
+            (tr(" Trash "), confirm_lines(question, note, "trash   "))
+        }
         Dialog::ConfirmDelete { paths } => {
             let what = match paths.as_slice() {
                 [one] => format!(
