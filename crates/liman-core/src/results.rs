@@ -108,12 +108,25 @@ pub fn search_names(
     show_hidden: bool,
     cancelled: &dyn Fn() -> bool,
 ) -> Vec<PathBuf> {
-    let needle = needle.to_lowercase();
     let mut out = Vec::new();
+    search_names_with(root, needle, show_hidden, cancelled, &mut |p| out.push(p));
+    out
+}
+
+/// [`search_names`], handing each match to `found` as soon as it is seen (live search).
+pub fn search_names_with(
+    root: &Path,
+    needle: &str,
+    show_hidden: bool,
+    cancelled: &dyn Fn() -> bool,
+    found: &mut dyn FnMut(PathBuf),
+) {
+    let needle = needle.to_lowercase();
+    let mut count = 0;
     let mut queue = std::collections::VecDeque::from([root.to_path_buf()]);
     while let Some(dir) = queue.pop_front() {
         if cancelled() {
-            break;
+            return;
         }
         let Ok(items) = std::fs::read_dir(&dir) else {
             continue;
@@ -124,18 +137,18 @@ pub fn search_names(
                 continue;
             }
             let path = item.path();
-            if name.to_lowercase().contains(&needle) {
-                out.push(path.clone());
-                if out.len() == MAX_RESULTS {
-                    return out;
-                }
-            }
             if item.file_type().is_ok_and(|t| t.is_dir()) {
-                queue.push_back(path);
+                queue.push_back(path.clone());
+            }
+            if name.to_lowercase().contains(&needle) {
+                found(path);
+                count += 1;
+                if count == MAX_RESULTS {
+                    return;
+                }
             }
         }
     }
-    out
 }
 
 #[cfg(test)]

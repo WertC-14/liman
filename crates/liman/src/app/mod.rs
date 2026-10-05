@@ -87,6 +87,8 @@ struct Drag {
 pub struct Results {
     pub command: String,
     pub count: usize,
+    /// A live search (Ctrl+F) is still finding more.
+    pub running: bool,
 }
 
 /// What the body of the window shows.
@@ -392,6 +394,11 @@ impl App {
                     self.request_git();
                 }
             }
+            AppEvent::SearchFound {
+                generation,
+                entries,
+                done,
+            } => self.on_search_found(generation, entries, done),
             AppEvent::Counts {
                 generation,
                 counts,
@@ -1050,6 +1057,7 @@ impl App {
         let results = Results {
             command: tr("Recent files").into(),
             count: paths.len(),
+            running: false,
         };
         self.load_results(results, home, paths);
     }
@@ -1331,44 +1339,112 @@ impl App {
         let results = Results {
             command,
             count: paths.len(),
+            running: false,
         };
         self.load_results(results, out.cwd, paths);
     }
 
+    /// Ctrl+F: every key searches again (live, like cardea); matches stream into a results view.
+    /// ↑↓ move in the results while typing, Enter keeps them, Esc goes back to the folder.
     fn on_search_key(&mut self, key: KeyEvent) {
         let Some(text) = &mut self.search_input else {
             return;
         };
         match key.code {
-            KeyCode::Esc => self.search_input = None,
+            KeyCode::Esc => {
+                self.search_input = None;
+                if self.tab.results.is_some() {
+                    self.load(self.tab.cwd.clone());
+                }
+            }
+            KeyCode::Enter => self.search_input = None,
+            KeyCode::Down => self.move_selection(1),
+            KeyCode::Up => self.move_selection(-1),
             KeyCode::Backspace => {
                 text.pop();
+                self.search_live();
             }
-            KeyCode::Char(c) if is_typing(key) => text.push(c),
-            KeyCode::Enter => {
-                let needle = self.search_input.take().unwrap_or_default();
-                if needle.is_empty() {
-                    return;
-                }
-                // Search the folder itself, not inside a previous result list.
-                let base = self.tab.cwd.clone();
-                self.results_pending = Some(Results {
-                    command: trf("search “{}”", &[&needle]),
-                    count: 0, // filled in when the listing arrives
-                });
-                self.load_from_shell = true;
-                self.start_loading(&base);
-                worker::spawn_search(
-                    self.tx.clone(),
-                    self.generation,
-                    self.current_generation.clone(),
-                    base,
-                    needle,
-                    self.options.show_hidden,
-                );
+            KeyCode::Char(c) if is_typing(key) => {
+                text.push(c);
+                self.search_live();
             }
             _ => {}
         }
+    }
+
+    /// Starts a search for the typed text (the older one stops: new generation). The view becomes
+    /// an empty results list that fills as matches arrive.
+    fn search_live(&mut self) {
+        let needle = self.search_input.clone().unwrap_or_default();
+        if needle.is_empty() {
+            if self.tab.results.is_some() {
+                self.load(self.tab.cwd.clone()); // nothing to search: back to the folder
+            }
+            return;
+        }
+        self.generation += 1;
+        self.current_generation
+            .store(self.generation, std::sync::atomic::Ordering::Relaxed);
+        self.loading_path = None;
+        self.results_pending = None;
+        self.tab.results = Some(Results {
+            command: trf("search “{}”", &[&needle]),
+            count: 0,
+            running: true,
+        });
+        self.tab.listing = Listing::Ready(Vec::new());
+        self.tab.visible.clear();
+        self.tab.names_lower.clear();
+        self.tab.visible_for.clear();
+        self.tab.filter.clear();
+        self.tab.marked.clear();
+        self.tab.table = TableState::default();
+        // Search the folder itself, not inside a previous result list.
+        worker::spawn_search(
+            self.tx.clone(),
+            self.generation,
+            self.current_generation.clone(),
+            self.tab.cwd.clone(),
+            needle,
+            self.options.show_hidden,
+        );
+    }
+
+    fn on_search_found(&mut self, generation: u64, entries: Vec<Entry>, done: bool) {
+        if generation != self.generation {
+            return; // an older search
+        }
+        let Listing::Ready(list) = &mut self.tab.listing else {
+            return;
+        };
+        list.extend(entries);
+        let count = list.len();
+        let dirs: Vec<PathBuf> = if done {
+            list.iter()
+                .filter(|e| e.is_dir)
+                .map(|e| e.path.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if let Some(results) = &mut self.tab.results {
+            results.count = count;
+            results.running = !done;
+        }
+        self.refresh_visible();
+        if self.tab.table.selected().is_none() {
+            self.select_row(0);
+        }
+        if !dirs.is_empty() {
+            worker::spawn_counts(
+                self.tx.clone(),
+                self.generation,
+                self.current_generation.clone(),
+                dirs,
+                self.options,
+            );
+        }
+        self.dirty = true;
     }
 
     /// Ctrl+L: the path bar becomes a text field with the current folder.
@@ -2055,8 +2131,11 @@ mod tests {
         for c in "REPORT".chars() {
             app.handle(key(KeyCode::Char(c)));
         }
+        // Live: the results view is there while typing, Enter only keeps it.
+        assert!(app.tab.results.is_some());
         app.handle(key(KeyCode::Enter));
-        while app.tab.results.is_none() {
+        assert!(app.search_input.is_none());
+        while app.tab.results.as_ref().is_none_or(|r| r.running) {
             let ev = rx
                 .recv_timeout(std::time::Duration::from_secs(5))
                 .expect("search result");

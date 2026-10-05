@@ -101,8 +101,9 @@ pub fn spawn_results(tx: Sender<AppEvent>, generation: u64, base: PathBuf, paths
     });
 }
 
-/// Searches names under `root` (Ctrl+F). `current` holds the newest search id; an older search
-/// sees it change and stops early.
+/// Searches names under `root` (Ctrl+F) and sends what it finds while it searches, in batches
+/// (live results). `current` holds the newest search id; an older search sees it change and
+/// stops early.
 pub fn spawn_search(
     tx: Sender<AppEvent>,
     generation: u64,
@@ -112,18 +113,29 @@ pub fn spawn_search(
     show_hidden: bool,
 ) {
     use std::sync::atomic::Ordering;
+    const BATCH: Duration = Duration::from_millis(80);
     thread::spawn(move || {
         let cancelled = || current.load(Ordering::Relaxed) != generation;
-        let paths = liman_core::results::search_names(&root, &needle, show_hidden, &cancelled);
-        if cancelled() {
-            return;
-        }
-        let entries = liman_core::results::entries_for(&paths, &root);
-        let _ = tx.send(AppEvent::Listing {
-            generation,
-            path: root,
-            result: Ok(entries),
+        let mut batch = Vec::new();
+        let mut last = Instant::now();
+        let send = |paths: &mut Vec<PathBuf>, done: bool| {
+            let entries = liman_core::results::entries_for(&std::mem::take(paths), &root);
+            let _ = tx.send(AppEvent::SearchFound {
+                generation,
+                entries,
+                done,
+            });
+        };
+        liman_core::results::search_names_with(&root, &needle, show_hidden, &cancelled, &mut |p| {
+            batch.push(p);
+            if last.elapsed() >= BATCH {
+                last = Instant::now();
+                send(&mut batch, false);
+            }
         });
+        if !cancelled() {
+            send(&mut batch, true);
+        }
     });
 }
 

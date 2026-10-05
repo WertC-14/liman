@@ -22,6 +22,12 @@ pub enum AppEvent {
         path: PathBuf,
         result: Result<Vec<Entry>, String>,
     },
+    /// Live search (Ctrl+F): more matches; `done` with the last batch.
+    SearchFound {
+        generation: u64,
+        entries: Vec<Entry>,
+        done: bool,
+    },
     /// Children counts of folders in the listing `generation` (sent in batches).
     Counts {
         generation: u64,

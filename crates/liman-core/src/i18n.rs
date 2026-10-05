@@ -337,7 +337,6 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         " ⎇ Commit message: " => " ⎇ Commit mesajı: ",
         "▏   Enter commit · Esc cancel" => "▏   Enter commit · Esc vazgeç",
         " ⌕ Search in this folder and below: " => " ⌕ Bu klasörde ve altında ara: ",
-        "▏   Enter search · Esc cancel" => "▏   Enter ara · Esc vazgeç",
         " Rename: " => " Yeni ad: ",
         "rename " => "adlandır ",
         "cancel" => "vazgeç",
@@ -360,6 +359,10 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "quit" => "çık",
         "keep filter" => "süzgeci tut",
         "keep" => "vazgeç",
+        "▏   ↑↓ choose · Enter keep the results · Esc back" => {
+            "▏   ↑↓ seç · Enter sonuçlarda kal · Esc geri"
+        }
+        "  · searching…" => "  · aranıyor…",
         "Go to path…" => "Yola git…",
         "   Tab complete · Enter go · Esc cancel" => "   Tab tamamla · Enter git · Esc vazgeç",
         "No such file or folder: {}" => "Böyle bir dosya ya da klasör yok: {}",

@@ -186,12 +186,19 @@ impl GridView<'_> {
     }
 }
 
-/// Cuts `name` to `max` characters with a trailing `…`.
+/// Cuts `name` to `max` characters with a `…`. A path (search results: `src/app/mod.rs`) keeps
+/// its end, where the file name is; a plain name keeps its start.
 fn truncate(name: &str, max: usize) -> String {
-    if name.chars().count() <= max {
-        name.to_string()
+    let len = name.chars().count();
+    if len <= max {
+        return name.to_string();
+    }
+    let keep = max.saturating_sub(1);
+    if name.contains('/') {
+        let tail: String = name.chars().skip(len - keep).collect();
+        format!("…{tail}")
     } else {
-        let mut s: String = name.chars().take(max.saturating_sub(1)).collect();
+        let mut s: String = name.chars().take(keep).collect();
         s.push('…');
         s
     }
@@ -199,6 +206,13 @@ fn truncate(name: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn long_names_keep_their_start_and_paths_their_end() {
+        assert_eq!(truncate("holiday-photos.zip", 8), "holiday…");
+        assert_eq!(truncate("Projects/app/src/main.rs", 10), "…c/main.rs");
+        assert_eq!(truncate("short", 8), "short");
+    }
+
     use super::*;
     use liman_core::{FileType, SpecialDir};
 

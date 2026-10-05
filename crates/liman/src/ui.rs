@@ -633,6 +633,12 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
                 &[&format::items(results.count), &app.tab.cwd.display()],
             ))
             .fg(theme::dim()),
+            Span::raw(if results.running {
+                tr("  · searching…")
+            } else {
+                ""
+            })
+            .fg(theme::accent()),
             Span::raw(tr("   Bksp/Esc back to the folder")).fg(theme::dim()),
         ]);
         frame.render_widget(Paragraph::new(line), area);
@@ -863,7 +869,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         let line = Line::from(vec![
             Span::raw(tr(" ⌕ Search in this folder and below: ")).fg(theme::dim()),
             Span::raw(text.clone()).fg(theme::fg()).bold(),
-            Span::raw(tr("▏   Enter search · Esc cancel")).fg(theme::dim()),
+            Span::raw(tr("▏   ↑↓ choose · Enter keep the results · Esc back")).fg(theme::dim()),
         ]);
         frame.render_widget(
             Paragraph::new(line).style(Style::new().bg(theme::bar_bg())),
