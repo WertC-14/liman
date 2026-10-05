@@ -142,7 +142,6 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "video" | "videos" => "video",
         "audio" => "ses",
         "other" => "diğer",
-        "Binary file" => "İkili dosya",
         "Cannot read this item" => "Bu öğe okunamıyor",
         "Cannot read: {}" => "Okunamadı: {}",
         "Cannot open this folder" => "Bu klasör açılamıyor",
@@ -342,6 +341,8 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         // status bar hints and the help window (keys, then what they do)
         "theme" => "tema",
         "keep" => "vazgeç",
+        "Permissions" => "İzinler",
+        "Markdown" => "Markdown",
         "Help" => "Yardım",
         "Filter" => "Süz",
         "Search" => "Ara",

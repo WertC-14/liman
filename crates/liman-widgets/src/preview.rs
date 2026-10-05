@@ -19,11 +19,22 @@ use crate::theme;
 pub struct PreviewView<'a> {
     preview: &'a Preview,
     scroll: usize,
+    raw_markdown: bool,
 }
 
 impl<'a> PreviewView<'a> {
     pub fn new(preview: &'a Preview) -> Self {
-        Self { preview, scroll: 0 }
+        Self {
+            preview,
+            scroll: 0,
+            raw_markdown: false,
+        }
+    }
+
+    /// Markdown as source (highlighted, with line numbers) instead of formatted.
+    pub fn raw_markdown(mut self, raw: bool) -> Self {
+        self.raw_markdown = raw;
+        self
     }
 
     /// First content line to show (text, folder names); images ignore it.
@@ -33,8 +44,8 @@ impl<'a> PreviewView<'a> {
     }
 }
 
-/// Rows the header takes: name, details, a blank line.
-pub const HEADER_ROWS: u16 = 3;
+/// Rows the header takes: name, four lines of details, a rule.
+pub const HEADER_ROWS: u16 = 6;
 
 impl Widget for PreviewView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
@@ -52,7 +63,18 @@ impl Widget for PreviewView<'_> {
                     let lang = highlight::Lang::from_extension(
                         p.path.extension().and_then(|e| e.to_str()).unwrap_or(""),
                     );
-                    position = Some(text(lines, *more, self.scroll, lang, body, buf));
+                    let formatted = lang == highlight::Lang::Markdown && !self.raw_markdown;
+                    let view = TextView {
+                        lines,
+                        more: *more,
+                        scroll: self.scroll,
+                        lang,
+                        formatted,
+                    };
+                    position = Some(view.render(body, buf));
+                }
+                Content::Hex { lines, more } => {
+                    position = Some(hex(lines, *more, self.scroll, body, buf));
                 }
                 Content::Folder {
                     total,
@@ -97,26 +119,49 @@ fn header(p: &Preview, position: Option<(usize, usize, usize)>, area: Rect, buf:
         Span::raw(" "),
         Span::raw(name.into_owned()).fg(theme::fg()).bold(),
     ]);
-    let mut details = vec![badge::type_label(
-        extension,
-        p.file_type == FileType::Folder,
-    )];
-    if p.file_type != FileType::Folder {
-        details.push(format::size(p.size));
-    }
-    if let Some(time) = p.modified {
-        details.push(format::modified(time, format::now()));
-    }
-    match &p.content {
-        Content::Image { original, .. } => details.push(format!("{}×{}", original.0, original.1)),
+    // Details as label / value rows (cardea's inspector), labels in one column.
+    let size = match &p.content {
+        Content::Folder { total, more, .. } if *more => trf("{}+ items", &[total]),
+        Content::Folder { total, .. } => format::items(*total),
+        _ => format::size(p.size),
+    };
+    let size = match &p.content {
+        Content::Image { original, .. } => format!("{size} · {}×{}", original.0, original.1),
         Content::Text {
             source: Some(tool), ..
-        } => details.push(trf("via {}", &[tool])),
-        _ => {}
+        } => format!("{size} · {}", trf("via {}", &[tool])),
+        _ => size,
+    };
+    let modified = p
+        .modified
+        .map_or_else(|| "—".into(), |t| format::modified(t, format::now()));
+    let mut perms = p.mode.map_or_else(|| "—".into(), format::permissions);
+    if let Some(target) = &p.link_target {
+        perms = format!("{perms}  → {}", target.display());
     }
+    let details = [
+        (
+            tr("Type"),
+            badge::type_label(extension, p.file_type == FileType::Folder),
+        ),
+        (tr("Size"), size),
+        (tr("Modified"), modified),
+        (tr("Permissions"), perms),
+    ];
+    let label_width = details
+        .iter()
+        .map(|(l, _)| l.chars().count())
+        .max()
+        .unwrap_or(0);
     let rows = |y: u16| Rect::new(area.x, area.y + y, area.width, 1).intersection(area);
     Paragraph::new(title).render(rows(0), buf);
-    Paragraph::new(Line::from(details.join(" · ")).fg(theme::dim())).render(rows(1), buf);
+    for (i, (label, value)) in details.iter().enumerate() {
+        let line = Line::from(vec![
+            Span::raw(format!(" {label:<label_width$}  ")).fg(theme::dim()),
+            Span::raw(value.as_str()).fg(theme::fg()),
+        ]);
+        Paragraph::new(line).render(rows(1 + i as u16), buf);
+    }
     // The rule carries the position on its right: "──── 12–40 / 300 ".
     let mut rule = vec![Span::raw("─".repeat(usize::from(area.width))).fg(theme::border())];
     if let Some((first, last, total)) = position {
@@ -128,47 +173,91 @@ fn header(p: &Preview, position: Option<(usize, usize, usize)>, area: Rect, buf:
             Span::raw("─").fg(theme::border()),
         ];
     }
-    Paragraph::new(Line::from(rule)).render(rows(2), buf);
+    Paragraph::new(Line::from(rule)).render(rows(HEADER_ROWS - 1), buf);
 }
 
-/// Highlighted, wrapped text with line numbers. Returns (first line, last line, total) shown.
-fn text(
-    lines: &[String],
+/// A text preview: highlighted source with line numbers, or formatted Markdown.
+struct TextView<'a> {
+    lines: &'a [String],
     more: bool,
     scroll: usize,
     lang: highlight::Lang,
-    area: Rect,
-    buf: &mut Buffer,
-) -> (usize, usize, usize) {
-    let digits = lines.len().max(1).to_string().len();
-    let gutter = digits + 3; // "123 │ "
-    let width = usize::from(area.width).saturating_sub(gutter).max(1);
-    let start = scroll.min(lines.len().saturating_sub(1));
-    // Comments and code fences that opened above the first line on screen.
-    let mut state = highlight::state_after(lang, lines[..start].iter().map(String::as_str));
-    let height = usize::from(area.height);
-    let mut out: Vec<Line> = Vec::with_capacity(height);
-    let mut last = start;
-    for (i, line) in lines.iter().enumerate().skip(start) {
-        if out.len() >= height {
-            break;
-        }
-        let spans = highlight::line_spans(lang, line, &mut state);
-        for (k, part) in wrap(spans, width).into_iter().enumerate() {
+    /// Markdown formatted (no markers, no line numbers) instead of as source.
+    formatted: bool,
+}
+
+impl TextView<'_> {
+    /// Draws from line `scroll`, wrapped. Returns (first line, last line, total) shown.
+    fn render(&self, area: Rect, buf: &mut Buffer) -> (usize, usize, usize) {
+        let lines = self.lines;
+        let digits = lines.len().max(1).to_string().len();
+        let gutter = if self.formatted { 1 } else { digits + 3 }; // "123 │ "
+        let width = usize::from(area.width).saturating_sub(gutter).max(1);
+        let start = self.scroll.min(lines.len().saturating_sub(1));
+        // Comments and code fences that opened above the first line on screen.
+        let above = lines[..start].iter().map(String::as_str);
+        let mut state = highlight::state_after(self.lang, above);
+        let mut in_code = state.in_fence();
+        let height = usize::from(area.height);
+        let mut out: Vec<Line> = Vec::with_capacity(height);
+        let mut last = start;
+        for (i, line) in lines.iter().enumerate().skip(start) {
             if out.len() >= height {
                 break;
             }
-            let number = if k == 0 {
-                format!("{:>digits$} │ ", i + 1)
+            let spans = if self.formatted {
+                crate::markdown::line(line, &mut in_code, width)
             } else {
-                format!("{:>digits$} │ ", "")
+                highlight::line_spans(self.lang, line, &mut state)
             };
-            let mut row = vec![Span::raw(number).fg(theme::border())];
-            row.extend(part);
-            out.push(Line::from(row));
+            for (k, part) in wrap(spans, width).into_iter().enumerate() {
+                if out.len() >= height {
+                    break;
+                }
+                let number = match (self.formatted, k) {
+                    (true, _) => " ".to_string(),
+                    (false, 0) => format!("{:>digits$} │ ", i + 1),
+                    (false, _) => format!("{:>digits$} │ ", ""),
+                };
+                let mut row = vec![Span::raw(number).fg(theme::border())];
+                row.extend(part);
+                out.push(Line::from(row));
+            }
+            last = i + 1;
         }
-        last = i + 1;
+        if self.more && last == lines.len() && out.len() < height {
+            out.push(Line::from("…").fg(theme::dim()));
+        }
+        Paragraph::new(out).render(area, buf);
+        (start + 1, last, lines.len())
     }
+}
+
+/// A hex dump: offsets dim, bytes in the normal color, the text column in the accent color.
+fn hex(
+    lines: &[String],
+    more: bool,
+    scroll: usize,
+    area: Rect,
+    buf: &mut Buffer,
+) -> (usize, usize, usize) {
+    let start = scroll.min(lines.len().saturating_sub(1));
+    let height = usize::from(area.height);
+    let mut out: Vec<Line> = lines
+        .iter()
+        .skip(start)
+        .take(height)
+        .map(|l| {
+            let (offset, rest) = l.split_at(l.len().min(8));
+            let (bytes, text) = rest.split_at(rest.find("  |").unwrap_or(rest.len()));
+            Line::from(vec![
+                Span::raw(offset.to_string()).fg(theme::border()),
+                Span::raw(bytes.to_string()).fg(theme::fg()),
+                Span::raw(text.to_string()).fg(theme::accent()),
+            ])
+        })
+        .collect();
+    let last = (start + out.len()).min(lines.len());
     if more && last == lines.len() && out.len() < height {
         out.push(Line::from("…").fg(theme::dim()));
     }
@@ -328,6 +417,8 @@ mod tests {
             file_type,
             size: 1200,
             modified: None,
+            mode: Some(0o644),
+            link_target: None,
             content,
         }
     }
@@ -353,12 +444,55 @@ mod tests {
                 source: None,
             },
         );
-        let mut buf = Buffer::empty(Rect::new(0, 0, 30, 5));
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 8));
         PreviewView::new(&p).render(buf.area, &mut buf);
         let rows = rows(&buf);
         assert!(rows[0].starts_with(" RS  main.rs"));
-        assert!(rows[1].starts_with("RS file · 1.2 kB"));
-        assert!(rows[3].starts_with("1 │ fn main() {}"));
+        assert!(
+            rows[1].starts_with(" Type         RS file"),
+            "{:?}",
+            rows[1]
+        );
+        assert!(rows[2].starts_with(" Size         1.2 kB"));
+        assert!(rows[4].starts_with(" Permissions  rw-r--r-- (644)"));
+        assert!(rows[6].starts_with("1 │ fn main() {}"));
+    }
+
+    #[test]
+    fn markdown_is_formatted_unless_raw() {
+        let p = preview(
+            "notes.md",
+            FileType::Text,
+            Content::Text {
+                lines: vec!["# Plan".into(), "- **soon**".into()],
+                more: false,
+                source: None,
+            },
+        );
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 8));
+        PreviewView::new(&p).render(buf.area, &mut buf);
+        let formatted = rows(&buf);
+        assert!(formatted[6].starts_with(" Plan"), "{:?}", formatted[6]);
+        assert!(formatted[7].starts_with(" • soon"));
+        PreviewView::new(&p)
+            .raw_markdown(true)
+            .render(buf.area, &mut buf);
+        assert!(rows(&buf)[6].starts_with("1 │ # Plan"));
+    }
+
+    #[test]
+    fn binary_files_show_a_hex_dump() {
+        let p = preview(
+            "x.bin",
+            FileType::Other,
+            Content::Hex {
+                lines: vec!["00000000  7f 45  |.E|".into()],
+                more: false,
+            },
+        );
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 8));
+        PreviewView::new(&p).render(buf.area, &mut buf);
+        assert!(rows(&buf)[6].starts_with("00000000  7f 45  |.E|"));
     }
 
     #[test]
@@ -375,9 +509,9 @@ mod tests {
                 pixels: vec![red, red, blue, blue],
             },
         );
-        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 4));
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 8));
         PreviewView::new(&p).render(buf.area, &mut buf);
-        let cell = &buf[(1, 3)]; // centered: (4 - 2) / 2 = 1
+        let cell = &buf[(1, 6)]; // under the 6 header rows; centered: (4 - 2) / 2 = 1
         assert_eq!(cell.symbol(), "▀");
         assert_eq!(cell.fg, Color::Rgb(255, 0, 0));
         assert_eq!(cell.bg, Color::Rgb(0, 0, 255));

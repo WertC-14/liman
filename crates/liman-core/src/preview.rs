@@ -28,6 +28,10 @@ pub struct Preview {
     pub file_type: FileType,
     pub size: u64,
     pub modified: Option<SystemTime>,
+    /// Unix permission bits (`0o644`), of the target for a link.
+    pub mode: Option<u32>,
+    /// Where a symbolic link points (as written in the link).
+    pub link_target: Option<PathBuf>,
     pub content: Content,
 }
 
@@ -56,7 +60,13 @@ pub enum Content {
         original: (u32, u32),
         pixels: Vec<[u8; 4]>,
     },
-    /// Only the header is shown; the text says why (binary file, tool missing, unreadable...).
+    /// The start of a binary file as a hex dump, one line per 16 bytes (`xxd` style).
+    Hex {
+        lines: Vec<String>,
+        /// The file is longer than the dump.
+        more: bool,
+    },
+    /// Only the header is shown; the text says why (tool missing, unreadable...).
     Note(String),
 }
 
@@ -70,11 +80,14 @@ pub fn build(path: &Path, cols: u16, rows: u16) -> Preview {
         Some(_) if is_dir => folder(path),
         Some(_) => file(path, file_type, cols, rows),
     };
+    use std::os::unix::fs::PermissionsExt;
     Preview {
         path: path.to_path_buf(),
         file_type,
         size: meta.as_ref().filter(|m| !m.is_dir()).map_or(0, |m| m.len()),
+        mode: meta.as_ref().map(|m| m.permissions().mode() & 0o7777),
         modified: meta.and_then(|m| m.modified().ok()),
+        link_target: fs::read_link(path).ok(),
         content,
     }
 }
@@ -104,7 +117,7 @@ fn text(path: &Path) -> Content {
         return Content::Note(trf("Cannot read: {}", &[&e]));
     }
     if buf.contains(&0) {
-        return Content::Note(tr("Binary file").into());
+        return hex_dump(&buf);
     }
     let truncated = buf.len() == TEXT_BYTES;
     let text = String::from_utf8_lossy(&buf);
@@ -119,6 +132,43 @@ fn text(path: &Path) -> Content {
         lines,
         more,
         source: None,
+    }
+}
+
+/// Bytes of a binary file shown as hex.
+const HEX_BYTES: usize = 4096;
+
+/// `00000000  7f 45 4c 46 02 01 01 00  00 00 00 00 00 00 00 00  |.ELF............|`
+fn hex_dump(bytes: &[u8]) -> Content {
+    use std::fmt::Write as _;
+    let shown = &bytes[..bytes.len().min(HEX_BYTES)];
+    let lines = shown
+        .chunks(16)
+        .enumerate()
+        .map(|(i, row)| {
+            let mut line = format!("{:08x} ", i * 16);
+            for (k, b) in row.iter().enumerate() {
+                let gap = if k == 8 { "  " } else { " " };
+                let _ = write!(line, "{gap}{b:02x}");
+            }
+            // Pad a short last row so the text column lines up.
+            let missing = 16 - row.len();
+            line.push_str(&" ".repeat(missing * 3 + usize::from(row.len() <= 8)));
+            line.push_str("  |");
+            line.extend(row.iter().map(|&b| {
+                if b.is_ascii_graphic() || b == b' ' {
+                    char::from(b)
+                } else {
+                    '.'
+                }
+            }));
+            line.push('|');
+            line
+        })
+        .collect();
+    Content::Hex {
+        lines,
+        more: bytes.len() > HEX_BYTES,
     }
 }
 
@@ -292,14 +342,26 @@ mod tests {
     }
 
     #[test]
-    fn binary_files_get_a_note() {
+    fn binary_files_get_a_hex_dump() {
         let dir = temp("bin");
         let file = dir.join("x.bin");
-        fs::write(&file, [0u8, 1, 2, 3]).unwrap();
+        let mut bytes = b"\x7fELF".to_vec();
+        bytes.extend(0u8..14);
+        fs::write(&file, &bytes).unwrap();
+        let preview = build(&file, 40, 10);
+        let Content::Hex { lines, more } = preview.content else {
+            panic!("expected a hex dump")
+        };
+        assert!(!more);
         assert_eq!(
-            build(&file, 40, 10).content,
-            Content::Note("Binary file".into())
+            lines,
+            [
+                "00000000  7f 45 4c 46 00 01 02 03  04 05 06 07 08 09 0a 0b  |.ELF............|",
+                "00000010  0c 0d                                             |..|",
+            ]
         );
+        assert_eq!(preview.mode.map(|m| m & 0o600), Some(0o600)); // we wrote it, we can read it
+        assert_eq!(preview.link_target, None);
         fs::remove_dir_all(&dir).unwrap();
     }
 

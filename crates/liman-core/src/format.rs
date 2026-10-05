@@ -37,6 +37,22 @@ pub fn size(bytes: u64) -> String {
     }
 }
 
+/// Unix permissions like `ls -l`, with the octal value: `rw-r--r-- (644)`.
+pub fn permissions(mode: u32) -> String {
+    let bits = (0..9)
+        .map(|i| {
+            let on = mode & (0o400 >> i) != 0;
+            match (on, i % 3) {
+                (false, _) => '-',
+                (true, 0) => 'r',
+                (true, 1) => 'w',
+                (true, _) => 'x',
+            }
+        })
+        .collect::<String>();
+    format!("{bits} ({:03o})", mode & 0o777)
+}
+
 pub fn items(count: usize) -> String {
     match count {
         1 => tr("1 item").into(),
@@ -80,6 +96,13 @@ mod tests {
         assert_eq!(size(17_100_000), "17.1 MB");
         assert_eq!(size(999_999), "1.0 MB");
         assert_eq!(size(3_200_000_000), "3.2 GB");
+    }
+
+    #[test]
+    fn permission_bits() {
+        assert_eq!(permissions(0o644), "rw-r--r-- (644)");
+        assert_eq!(permissions(0o755), "rwxr-xr-x (755)");
+        assert_eq!(permissions(0o100600), "rw------- (600)");
     }
 
     #[test]

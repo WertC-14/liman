@@ -545,7 +545,9 @@ fn render_preview(frame: &mut Frame, app: &mut App, area: Rect, title: &str, foc
     );
     if let Some(preview) = &app.preview.current {
         frame.render_widget(
-            liman_widgets::preview::PreviewView::new(preview).scroll(app.preview.scroll),
+            liman_widgets::preview::PreviewView::new(preview)
+                .scroll(app.preview.scroll)
+                .raw_markdown(app.preview.raw_markdown),
             inner,
         );
     }
@@ -825,6 +827,7 @@ const PREVIEW_HINTS: &[(&str, &str)] = &[
     ("↑↓ PgUp/PgDn", "Scroll"),
     ("g/G", "Start / end"),
     ("Enter", "Full screen"),
+    ("m", "Markdown"),
     ("Esc", "Files"),
 ];
 const TERMINAL_HINTS: &[(&str, &str)] = &[

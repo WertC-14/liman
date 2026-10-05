@@ -22,6 +22,8 @@ pub struct PreviewPane {
     pub current: Option<Preview>,
     /// First line shown (mouse wheel over the panel).
     pub scroll: usize,
+    /// `m`: Markdown as source instead of formatted.
+    pub raw_markdown: bool,
     /// Where the panel was drawn. Written by the UI.
     pub area: Rect,
     wanted: Option<PreviewKey>,
@@ -99,6 +101,7 @@ impl App {
         let max = match self.preview.current.as_ref().map(|p| &p.content) {
             Some(Content::Text { lines, .. }) => lines.len().saturating_sub(1),
             Some(Content::Folder { names, .. }) => names.len().saturating_sub(1),
+            Some(Content::Hex { lines, .. }) => lines.len().saturating_sub(1),
             _ => 0,
         };
         self.preview.scroll = self.preview.scroll.saturating_add_signed(delta).min(max);
@@ -121,6 +124,7 @@ impl App {
             KeyCode::PageUp | KeyCode::Char('b') => self.scroll_preview(-page),
             KeyCode::PageDown | KeyCode::Char(' ') => self.scroll_preview(page),
             KeyCode::Home | KeyCode::Char('g') => self.preview.scroll = 0,
+            KeyCode::Char('m') => self.preview.raw_markdown = !self.preview.raw_markdown,
             KeyCode::End | KeyCode::Char('G') => self.scroll_preview(isize::MAX / 2),
             KeyCode::Enter | KeyCode::Char('f') if self.preview.shown => {
                 self.preview.reader = !self.preview.reader;
