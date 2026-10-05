@@ -10,6 +10,7 @@ pub mod file_list;
 pub mod gitmark;
 pub mod grid;
 pub mod highlight;
+pub mod icons;
 pub mod markdown;
 pub mod preview;
 pub mod rows;

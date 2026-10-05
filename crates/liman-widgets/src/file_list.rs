@@ -184,6 +184,11 @@ impl<'a> FileList<'a> {
         if is_marked {
             name.push(Span::raw("✓ ").bold());
         }
+        if crate::icons::nerd() {
+            name.push(
+                Span::raw(format!("{} ", crate::icons::entry(entry))).fg(theme::entry_color(entry)),
+            );
+        }
         name.push(Span::raw(entry.name.clone()));
         if entry.is_symlink {
             name.push(Span::raw(" ↗").fg(theme::dim()));

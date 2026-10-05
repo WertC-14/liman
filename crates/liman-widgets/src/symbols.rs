@@ -5,6 +5,9 @@
 use liman_core::SpecialDir;
 
 pub fn special_dir(kind: SpecialDir) -> &'static str {
+    if crate::icons::nerd() {
+        return crate::icons::special_dir(kind);
+    }
     match kind {
         SpecialDir::Home => "⌂",
         SpecialDir::Desktop => "⊞",

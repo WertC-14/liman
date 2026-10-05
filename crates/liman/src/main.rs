@@ -26,7 +26,7 @@ Usage: liman            open the current folder
        liman --version  print the version
 
 Inside: ? shows all keys, Ctrl+P all commands.
-Config: ~/.config/liman/config (theme, lang = tr | en, colors = truecolor | 256, hidden, sort, preview)";
+Config: ~/.config/liman/config (theme, lang = tr | en, colors = truecolor | 256, icons = nerd | unicode, hidden, sort, preview)";
 
 /// Shortest time between two frames (~60 per second).
 const FRAME: Duration = Duration::from_millis(16);
@@ -72,6 +72,8 @@ fn main() -> io::Result<()> {
         ),
     };
     liman_widgets::colors::set_truecolor(truecolor);
+    // `icons = nerd` when the terminal font is a Nerd Font; plain Unicode otherwise.
+    liman_widgets::icons::set_nerd(settings.get("icons").is_some_and(|v| v == "nerd"));
     let mut app = App::new(cwd, Places::detect(&home), tx);
     app.apply_settings(&settings);
     let mut last_draw: Option<Instant> = None;

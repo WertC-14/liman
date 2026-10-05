@@ -29,6 +29,8 @@ pub fn render_sized(entry: &Entry, width: u16, height: u16) -> Text<'static> {
     let inner = width - 2;
     let label = if entry.is_dir && entry.special.is_none() {
         String::new() // plain folders: the shape says enough
+    } else if crate::icons::nerd() && !entry.is_dir {
+        format!("{} {}", crate::icons::entry(entry), badge::label(entry))
     } else {
         badge::label(entry)
     };

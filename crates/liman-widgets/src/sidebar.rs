@@ -119,8 +119,13 @@ impl Widget for Sidebar<'_> {
         lines.push(section(tr("FOLDERS")));
         for dir in self.tree {
             let arrow = if dir.expanded { "▾" } else { "▸" };
+            let icon = if crate::icons::nerd() {
+                format!("{} ", crate::icons::folder(dir.expanded))
+            } else {
+                String::new()
+            };
             lines.push(Line::from(vec![
-                Span::raw(format!(" {}{arrow} ", "  ".repeat(dir.depth))).fg(folder),
+                Span::raw(format!(" {}{arrow} {icon}", "  ".repeat(dir.depth))).fg(folder),
                 Span::raw(dir.name.as_str()).fg(shade(dir.path == self.current)),
             ]));
         }
