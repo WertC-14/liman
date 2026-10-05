@@ -72,16 +72,46 @@ pub enum Content {
 
 /// Builds the preview of `path` for a panel of `cols` × `rows` cells.
 pub fn build(path: &Path, cols: u16, rows: u16) -> Preview {
+    build_inner(path, cols, rows, false).0
+}
+
+/// Like [`build`], but an image is only decoded and handed back whole (for a terminal graphics
+/// protocol), not scaled to half-block pixels: one decode instead of two. Its `Content::Image`
+/// then has the original size and no pixels.
+pub fn build_with_image(path: &Path) -> (Preview, Option<image::DynamicImage>) {
+    build_inner(path, 0, 0, true)
+}
+
+fn build_inner(
+    path: &Path,
+    cols: u16,
+    rows: u16,
+    keep_image: bool,
+) -> (Preview, Option<image::DynamicImage>) {
     let meta = fs::metadata(path).ok();
     let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
     let file_type = FileType::from_path(path, is_dir);
+    let mut kept = None;
     let content = match &meta {
         None => Content::Note(tr("Cannot read this item").into()),
         Some(_) if is_dir => folder(path),
+        Some(_) if keep_image && is_raster(path, file_type) => match decode(path) {
+            Ok(img) => {
+                let original = (img.width(), img.height());
+                kept = Some(img);
+                Content::Image {
+                    width: 0,
+                    height: 0,
+                    original,
+                    pixels: Vec::new(),
+                }
+            }
+            Err(e) => Content::Note(trf("Cannot show this image: {}", &[&e])),
+        },
         Some(_) => file(path, file_type, cols, rows),
     };
     use std::os::unix::fs::PermissionsExt;
-    Preview {
+    let preview = Preview {
         path: path.to_path_buf(),
         file_type,
         size: meta.as_ref().filter(|m| !m.is_dir()).map_or(0, |m| m.len()),
@@ -89,7 +119,24 @@ pub fn build(path: &Path, cols: u16, rows: u16) -> Preview {
         modified: meta.and_then(|m| m.modified().ok()),
         link_target: fs::read_link(path).ok(),
         content,
-    }
+    };
+    (preview, kept)
+}
+
+/// An image the `image` crate can decode (SVG is vector, it is not).
+fn is_raster(path: &Path, file_type: FileType) -> bool {
+    file_type == FileType::Image
+        && !path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+}
+
+fn decode(path: &Path) -> Result<image::DynamicImage, String> {
+    image::ImageReader::open(path)
+        .and_then(|r| r.with_guessed_format())
+        .map_err(|e| e.to_string())
+        .and_then(|r| r.decode().map_err(|e| e.to_string()))
 }
 
 fn file(path: &Path, file_type: FileType, cols: u16, rows: u16) -> Content {
@@ -227,11 +274,7 @@ fn folder(path: &Path) -> Content {
 
 /// Decodes and scales an image to fit `cols` × `rows * 2` pixels.
 fn image(path: &Path, cols: u16, rows: u16) -> Content {
-    let decoded = image::ImageReader::open(path)
-        .and_then(|r| r.with_guessed_format())
-        .map_err(|e| e.to_string())
-        .and_then(|r| r.decode().map_err(|e| e.to_string()));
-    let img = match decoded {
+    let img = match decode(path) {
         Ok(img) => img,
         Err(e) => return Content::Note(trf("Cannot show this image: {}", &[&e])),
     };

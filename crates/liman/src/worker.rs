@@ -214,25 +214,70 @@ pub fn spawn_preview(
     picker: Option<ratatui_image::picker::Picker>,
 ) {
     thread::spawn(move || {
-        let preview = liman_core::preview::build(&key.0, key.1, key.2);
-        let graphic = picker
-            .filter(|_| matches!(preview.content, liman_core::preview::Content::Image { .. }))
-            .and_then(|picker| {
-                let image = image::ImageReader::open(&key.0)
-                    .ok()?
-                    .with_guessed_format()
-                    .ok()?
-                    .decode()
-                    .ok()?;
+        let is_image =
+            liman_core::FileType::from_path(&key.0, false) == liman_core::FileType::Image;
+        // With a graphics protocol the image is decoded once, for the protocol only.
+        let (preview, graphic) = match picker.filter(|_| is_image) {
+            Some(picker) => {
+                let (preview, image) = liman_core::preview::build_with_image(&key.0);
                 let size = ratatui::layout::Size::new(key.1, key.2);
                 let fit = ratatui_image::Resize::Fit(None);
-                let protocol = picker.new_protocol(image, size, fit).ok()?;
-                Some(Box::new(crate::app::Graphic(protocol)))
-            });
+                match image.and_then(|img| picker.new_protocol(img, size, fit).ok()) {
+                    Some(protocol) => (preview, Some(Box::new(crate::app::Graphic(protocol)))),
+                    // Could not encode: half blocks after all.
+                    None => (liman_core::preview::build(&key.0, key.1, key.2), None),
+                }
+            }
+            None => (liman_core::preview::build(&key.0, key.1, key.2), None),
+        };
         let _ = tx.send(AppEvent::Preview {
             key,
             preview: Box::new(preview),
             graphic,
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui_image::picker::{Picker, ProtocolType};
+    use std::sync::mpsc;
+
+    #[test]
+    fn with_a_graphics_protocol_an_image_is_encoded_once_on_the_worker() {
+        let dir = std::env::temp_dir().join(format!("liman-graphic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("dot.png");
+        // A 1×1 red PNG (checked: valid chunks and CRCs).
+        const RED_DOT: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D,
+            0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        std::fs::write(&png, RED_DOT).unwrap();
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Kitty);
+        let (tx, rx) = mpsc::channel();
+        spawn_preview(tx, (png, 20, 10), Some(picker));
+        let AppEvent::Preview {
+            preview, graphic, ..
+        } = rx.recv_timeout(Duration::from_secs(5)).unwrap()
+        else {
+            panic!("expected a preview")
+        };
+        assert!(graphic.is_some());
+        let liman_core::preview::Content::Image {
+            original, pixels, ..
+        } = preview.content
+        else {
+            panic!("expected an image")
+        };
+        assert_eq!(original, (1, 1));
+        assert!(pixels.is_empty()); // no half-block copy was made
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
