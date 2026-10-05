@@ -12,7 +12,7 @@ liman-core.workspace = true
 liman-widgets.workspace = true
 notify = { version = "8", default-features = false }
 portable-pty = "0.9"
-ratatui = "0.30"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "underline-color"] }
 vt100 = "0.16"
 
 [lints]
