@@ -26,6 +26,7 @@ pub struct Clipboard {
 pub struct JobStatus {
     pub label: String,
     pub done: u64,
+    /// 0 until the worker has measured the job (then the percentage shows).
     pub total: u64,
 }
 
@@ -298,15 +299,16 @@ impl App {
         self.job = Some(JobStatus {
             label,
             done: 0,
-            total: job.total(),
+            total: 0, // worked out by the worker, arrives with the first progress event
         });
         worker::spawn_job(self.tx.clone(), job, self.trash_dir.clone());
         true
     }
 
-    pub(super) fn on_job_progress(&mut self, done: u64) {
+    pub(super) fn on_job_progress(&mut self, done: u64, total: u64) {
         if let Some(job) = &mut self.job {
             job.done = done;
+            job.total = total;
             self.dirty = true;
         }
     }

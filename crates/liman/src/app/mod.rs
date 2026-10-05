@@ -386,7 +386,7 @@ impl App {
                 path,
                 result,
             } => self.on_listing(generation, path, result),
-            AppEvent::JobProgress { done } => self.on_job_progress(done),
+            AppEvent::JobProgress { done, total } => self.on_job_progress(done, total),
             AppEvent::JobFinished(outcome) => self.on_job_finished(outcome),
             AppEvent::TermOutput { id, bytes } if self.is_active_terminal(id) => {
                 self.on_term_output(&bytes)

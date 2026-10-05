@@ -890,15 +890,11 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
     if let Some(job) = &app.job {
-        let percent = (job.done * 100)
-            .checked_div(job.total)
-            .unwrap_or(0)
-            .min(100);
-        spans.push(
-            Span::raw(format!(" {}… {percent}%  ", job.label))
-                .fg(theme::fg())
-                .bold(),
-        );
+        let text = match (job.done * 100).checked_div(job.total) {
+            Some(percent) => format!(" {}… {}%  ", job.label, percent.min(100)),
+            None => format!(" {}…  ", job.label), // total still being measured
+        };
+        spans.push(Span::raw(text).fg(theme::fg()).bold());
     }
     if app.filter_editing || !app.filter.is_empty() {
         spans.push(

@@ -28,9 +28,10 @@ pub enum AppEvent {
         /// Folder, its child count and the type most of its files have.
         counts: Vec<(PathBuf, Option<usize>, Option<liman_core::FileType>)>,
     },
-    /// The running job got further (bytes for copy/move, items for the rest).
+    /// The running job got further (bytes for copy/move, items for the rest) out of `total`.
     JobProgress {
         done: u64,
+        total: u64,
     },
     JobFinished(Outcome),
     /// Bytes the embedded shell wrote.

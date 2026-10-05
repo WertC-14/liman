@@ -141,12 +141,22 @@ pub struct Outcome {
 }
 
 impl Job {
-    /// Progress unit: bytes for copy/move, items for the rest.
+    /// Progress unit: bytes for copy/move, items for the rest (a same-device move counts 1 per item).
+    /// Walks the source trees of a copy: call it on a worker thread.
     pub fn total(&self) -> u64 {
         match self {
-            Self::Copy { sources, .. } | Self::Move { sources, .. } => {
-                sources.iter().map(|p| ops::total_size(p)).sum()
-            }
+            Self::Copy { sources, .. } => sources.iter().map(|p| ops::total_size(p)).sum(),
+            // A move inside one file system is a rename: one unit, no need to walk the tree.
+            Self::Move { sources, dest } => sources
+                .iter()
+                .map(|p| {
+                    if same_device(p, dest) {
+                        1
+                    } else {
+                        ops::total_size(p)
+                    }
+                })
+                .sum(),
             Self::Rename { .. } => 1,
             Self::Trash { paths } => paths.len() as u64,
             Self::Undo(_) => 1,
@@ -163,11 +173,17 @@ impl Job {
                 let mut created = Vec::new();
                 let mut base = 0;
                 for src in &sources {
-                    match ops::copy_into(src, &dest, &mut |b| progress(base + b)) {
+                    // The bytes this source took, from its own progress (no second walk of the tree).
+                    let mut copied = 0;
+                    let result = ops::copy_into(src, &dest, &mut |b| {
+                        copied = b;
+                        progress(base + b);
+                    });
+                    match result {
                         Ok(path) => created.push(path),
                         Err(e) => return fail(Done::Copied(created), src, e),
                     }
-                    base += ops::total_size(src);
+                    base += copied;
                 }
                 ok(Done::Copied(created))
             }
@@ -175,13 +191,18 @@ impl Job {
                 let mut moved = Vec::new();
                 let mut base = 0;
                 for src in &sources {
-                    let size = ops::total_size(src);
-                    match ops::move_into(src, &dest, &mut |b| progress(base + b)) {
+                    // Bytes copied when the move crossed file systems; 0 for a rename (one unit).
+                    let mut copied = 0;
+                    let result = ops::move_into(src, &dest, &mut |b| {
+                        copied = b;
+                        progress(base + b);
+                    });
+                    match result {
                         Ok(to) if &to == src => {} // already there
                         Ok(to) => moved.push((src.clone(), to)),
                         Err(e) => return fail(Done::Moved(moved), src, e),
                     }
-                    base += size;
+                    base += copied.max(1);
                     progress(base);
                 }
                 ok(Done::Moved(moved))
@@ -228,9 +249,12 @@ impl Job {
                 let mut parts = Vec::new();
                 let mut base = 0;
                 for job in jobs {
-                    let size = job.total();
-                    let out = job.run(trash_dir, &mut |d| progress(base + d));
-                    base += size;
+                    let mut part = 0;
+                    let out = job.run(trash_dir, &mut |d| {
+                        part = d;
+                        progress(base + d);
+                    });
+                    base += part;
                     parts.push(out.done);
                     if out.error.is_some() {
                         return Outcome {
@@ -289,6 +313,15 @@ fn undo(done: &Done, trash_dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Whether `path` and the folder `dest` are on the same file system (a move is then a rename).
+fn same_device(path: &Path, dest: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (path.symlink_metadata(), dest.metadata()) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev(),
+        _ => false,
+    }
+}
+
 fn ok(done: Done) -> Outcome {
     Outcome { done, error: None }
 }
@@ -334,6 +367,39 @@ mod tests {
             Done::Copied(vec![dest.join("a.txt"), dest.join("b.txt")])
         );
         assert_eq!(out.done.describe(), "Copied 2 items");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn same_device_move_counts_items_and_progress_reaches_the_total() {
+        let dir = test_dir("job-move");
+        fs::create_dir(dir.join("big")).unwrap();
+        fs::write(dir.join("big/data"), "0123456789").unwrap();
+        fs::write(dir.join("c.txt"), "c").unwrap();
+        let dest = dir.join("dest");
+        fs::create_dir(&dest).unwrap();
+        let mov = Job::Move {
+            sources: vec![dir.join("big"), dir.join("c.txt")],
+            dest: dest.clone(),
+        };
+        // A rename per item, not the 11 bytes inside.
+        assert_eq!(mov.total(), 2);
+        // A batch reports the parts one after another and ends exactly at its total.
+        fs::write(dir.join("d.txt"), "ddd").unwrap();
+        let batch = Job::Batch(vec![
+            mov,
+            Job::Copy {
+                sources: vec![dir.join("d.txt")],
+                dest: dest.clone(),
+            },
+        ]);
+        let total = batch.total();
+        assert_eq!(total, 2 + 3);
+        let mut last = 0;
+        let out = batch.run(&dir.join("Trash"), &mut |d| last = d);
+        assert!(out.error.is_none(), "{:?}", out.error);
+        assert_eq!(last, total);
+        assert!(dest.join("big/data").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 

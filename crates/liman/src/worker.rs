@@ -64,15 +64,18 @@ pub fn spawn_counts(
 /// Progress events are sent at most this often, so a copy of many small files does not flood the UI.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Runs a file operation on a new thread and reports progress and the result.
+/// Runs a file operation on a new thread and reports progress and the result. The total (a walk
+/// of every source tree for a copy) is worked out here too, never on the UI thread.
 pub fn spawn_job(tx: Sender<AppEvent>, job: Job, trash_dir: PathBuf) {
     thread::spawn(move || {
+        let total = job.total();
+        let _ = tx.send(AppEvent::JobProgress { done: 0, total });
         let mut last = Instant::now();
         let progress_tx = tx.clone();
         let outcome = job.run(&trash_dir, &mut |done| {
             if last.elapsed() >= PROGRESS_INTERVAL {
                 last = Instant::now();
-                let _ = progress_tx.send(AppEvent::JobProgress { done });
+                let _ = progress_tx.send(AppEvent::JobProgress { done, total });
             }
         });
         let _ = tx.send(AppEvent::JobFinished(outcome));
