@@ -150,7 +150,7 @@ impl App {
         }
     }
 
-    /// Alt+1…9, Ctrl+PgUp/PgDn, a click on a chip.
+    /// Alt+1…9, the wheel over the tab row, a click on a chip.
     pub(super) fn switch_tab(&mut self, to: usize) {
         if to == self.tabs.active || to >= self.tabs.slots.len() {
             return;
@@ -357,7 +357,7 @@ mod tests {
         press(&mut app, KeyCode::Char('1'), KeyModifiers::ALT);
         settle(&mut app, &rx);
         assert_eq!(app.cwd, dir);
-        press(&mut app, KeyCode::PageDown, KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('2'), KeyModifiers::ALT);
         settle(&mut app, &rx);
         assert_eq!(app.cwd, dir.join("sub"));
         assert_eq!(app.selected_entry().unwrap().name, "inner.txt");

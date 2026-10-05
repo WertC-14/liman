@@ -220,7 +220,7 @@ impl Action {
             Self::Recent => "",
             Self::NewTab => "Ctrl+T",
             Self::CloseTab => "Ctrl+W",
-            Self::NextTab => "Ctrl+PgDn",
+            Self::NextTab => "Alt+1…9",
             Self::Preview => "F3",
             Self::Read => "r",
             Self::TerminalPanel => "F4",

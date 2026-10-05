@@ -79,13 +79,19 @@ impl App {
 
     /// Space: mark or unmark the selected entry and move down, like GUI list selection with Ctrl+click.
     pub(super) fn toggle_mark(&mut self) {
+        self.toggle_mark_here();
+        self.move_selection(1);
+    }
+
+    /// Ctrl+Space: mark or unmark the entry under the cursor and stay (like Ctrl+click).
+    pub(super) fn toggle_mark_here(&mut self) {
         let Some(path) = self.selected_entry().map(|e| e.path.clone()) else {
             return;
         };
         if !self.marked.remove(&path) {
             self.marked.insert(path);
         }
-        self.move_selection(1);
+        self.click_anchor = self.table.selected();
     }
 
     pub(super) fn mark_all(&mut self) {

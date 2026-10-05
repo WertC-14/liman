@@ -178,6 +178,36 @@ impl GitStatus {
 }
 
 /// Runs a git command in `dir` and returns its combined output, or the error text.
+/// The remote pushes go to: the upstream's remote, else `origin`, else the first one.
+/// Returns its name and URL.
+pub fn push_remote(dir: &Path, upstream: Option<&str>) -> Option<(String, String)> {
+    let names = run(dir, &["remote"]).ok()?;
+    let names: Vec<&str> = names.lines().filter(|l| !l.is_empty()).collect();
+    let from_upstream = upstream.and_then(|u| u.split('/').next());
+    let name = from_upstream
+        .filter(|n| names.contains(n))
+        .or_else(|| names.iter().copied().find(|n| *n == "origin"))
+        .or_else(|| names.first().copied())?
+        .to_string();
+    let url = run(dir, &["remote", "get-url", &name])
+        .ok()?
+        .trim()
+        .to_string();
+    Some((name, url))
+}
+
+/// `git@github.com:user/repo.git` / `https://github.com/user/repo.git` → `github.com/user/repo`.
+pub fn short_url(url: &str) -> String {
+    let url = url.trim_end_matches('/').trim_end_matches(".git");
+    let url = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .or_else(|| url.strip_prefix("ssh://"))
+        .unwrap_or(url);
+    let url = url.split_once('@').map_or(url, |(_, rest)| rest);
+    url.replacen(':', "/", 1)
+}
+
 pub fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
     let out = git(dir, args).map_err(|e| format!("git: {e}"))?;
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -192,6 +222,16 @@ pub fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_urls_are_shortened() {
+        assert_eq!(
+            short_url("git@github.com:WertC-14/liman.git"),
+            "github.com/WertC-14/liman"
+        );
+        assert_eq!(short_url("https://github.com/a/b.git"), "github.com/a/b");
+        assert_eq!(short_url("ssh://git@host:22/x/y"), "host/22/x/y");
+    }
     use crate::ops::test_dir;
     use std::fs;
 

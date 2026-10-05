@@ -188,7 +188,19 @@ fn render_git_panel(frame: &mut Frame, app: &mut App) {
         screen.width.saturating_sub(6).max(40),
         screen.height.saturating_sub(4).max(10),
     );
-    let title = format!(" Git · ⎇ {} ", git.summary());
+    // "⎇ main ↑2 → origin/main · github.com/user/repo": what p pushes and where.
+    let target = match (&git.upstream, &panel.remote) {
+        (Some(up), Some((_, url))) => {
+            format!(" → {up} · {}", liman_core::git::short_url(url))
+        }
+        (None, Some((name, url))) => format!(
+            " → {name} ({}) · {}",
+            tr("new branch"),
+            liman_core::git::short_url(url)
+        ),
+        (_, None) => format!(" · {}", tr("no remote")),
+    };
+    let title = format!(" Git · ⎇ {}{target} ", git.summary());
     let inner = popup(frame, &title, w, h);
     let [body, keys] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
     frame.render_widget(
@@ -389,12 +401,13 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Space / Ctrl+A", "mark / mark all"),
     ("Ctrl+click / Shift+click", "mark one / mark a range"),
     ("Shift+arrows / Home / End", "mark a range"),
+    ("Ctrl+Space", "mark one, stay in place"),
     ("drag onto a folder", "move (hold Ctrl: copy)"),
     ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
     ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
     ("Shift+Del", "delete for good (asks first)"),
     ("Ctrl+T / Ctrl+W", "new tab / close tab"),
-    ("Alt+1…9 / Ctrl+PgUp/PgDn", "go to tab"),
+    ("Alt+1…9 / wheel on the tabs", "go to tab"),
     ("F3", "preview panel"),
     ("r", "read the file full screen"),
     ("F4 / Ctrl+O", "terminal panel / full screen"),

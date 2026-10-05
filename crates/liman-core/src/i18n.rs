@@ -194,6 +194,7 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "This is the last tab (q quits)" => "Bu son sekme (q çıkar)",
         "new tab / close tab" => "yeni sekme / sekmeyi kapat",
         "go to tab" => "sekmeye geç",
+        "Alt+1…9 / wheel on the tabs" => "Alt+1…9 / sekmelerde tekerlek",
         "Terminal panel" => "Terminal paneli",
         "Terminal full screen" => "Terminal tam ekran",
         "Theme…" => "Tema…",
@@ -238,6 +239,11 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "{}, then failed: {}" => "{}, sonra başarısız: {}",
         "Not inside a git repository" => "Bir git deposunun içinde değil",
         "Staged" => "Hazırlandı",
+        "No remote yet: git remote add origin <URL> in the terminal" => {
+            "Uzak depo yok: terminalde git remote add origin <URL>"
+        }
+        "new branch" => "yeni dal",
+        "no remote" => "uzak depo yok",
         "Unstaged" => "Hazırlıktan çıkarıldı",
         "Discarded changes" => "Değişiklikler atıldı",
         "Nothing staged: stage files first (Space in the git panel)" => {
@@ -371,6 +377,7 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "mark one / mark a range" => "birini / aralığı işaretle",
         "Shift+arrows / Home / End" => "Shift+oklar / Home / End",
         "mark a range" => "aralığı işaretle",
+        "mark one, stay in place" => "birini işaretle, imleç yerinde kalsın",
         "drag onto a folder" => "klasörün üstüne sürükle",
         "move (hold Ctrl: copy)" => "taşı (Ctrl basılı: kopyala)",
         "copy  cut  paste" => "kopyala  kes  yapıştır",

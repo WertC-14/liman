@@ -471,8 +471,10 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::F(4) => return self.toggle_panel(),
-            KeyCode::PageUp if ctrl => return self.cycle_tab(-1),
-            KeyCode::PageDown if ctrl => return self.cycle_tab(1),
+            // Alt+1…9 picks a tab from anywhere, the terminal included.
+            KeyCode::Char(c @ '1'..='9') if key.modifiers.contains(KeyModifiers::ALT) => {
+                return self.switch_tab(c as usize - '1' as usize);
+            }
             KeyCode::F(3) => return self.toggle_preview(),
             KeyCode::Char('o') if ctrl => return self.toggle_fullscreen(),
             KeyCode::F(6) if self.term_mode == TermMode::Panel => return self.switch_focus(),
@@ -544,7 +546,6 @@ impl App {
             KeyCode::Char('t') if ctrl => self.new_tab(),
             KeyCode::Char('r') if !ctrl && !alt => self.open_reader(),
             KeyCode::Char('w') if ctrl => self.close_tab(),
-            KeyCode::Char(c @ '1'..='9') if alt => self.switch_tab(c as usize - '1' as usize),
             KeyCode::Left | KeyCode::Up if alt => self.go_up(),
             KeyCode::Right if alt => {
                 if self.selected_entry().is_some_and(|e| e.is_dir) {
@@ -564,6 +565,7 @@ impl App {
             KeyCode::Delete if key.modifiers.contains(KeyModifiers::SHIFT) => self.ask_delete(),
             KeyCode::Delete => self.trash_targets(),
             KeyCode::F(2) => self.begin_rename(),
+            KeyCode::Char(' ') if ctrl => self.toggle_mark_here(),
             KeyCode::Char(' ') => self.toggle_mark(),
             KeyCode::Esc if !self.filter.is_empty() => self.set_filter(String::new()),
             KeyCode::Esc if self.results.is_some() => self.go_up(),
@@ -678,6 +680,17 @@ impl App {
                 if self.preview.area.contains((mouse.column, mouse.row).into()) =>
             {
                 self.scroll_preview(-3)
+            }
+            // The wheel over the tab row walks through the tabs.
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+                if !self.tabs.chip_areas.is_empty() && self.tabs.chip_areas[0].y == mouse.row =>
+            {
+                let step = if mouse.kind == MouseEventKind::ScrollDown {
+                    1
+                } else {
+                    -1
+                };
+                self.cycle_tab(step)
             }
             MouseEventKind::ScrollDown => self.move_selection(self.wheel_step()),
             MouseEventKind::ScrollUp => self.move_selection(-self.wheel_step()),

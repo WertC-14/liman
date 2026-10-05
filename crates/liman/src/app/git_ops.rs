@@ -19,6 +19,8 @@ pub struct GitPanel {
     /// Which file the diff belongs to.
     pub diff_for: Option<PathBuf>,
     pub scroll: usize,
+    /// Where `p` pushes: remote name and URL (read when the panel opens).
+    pub remote: Option<(String, String)>,
 }
 
 impl App {
@@ -144,8 +146,25 @@ impl App {
         }
     }
 
+    /// `p`: pushes the current branch's commits (not files: what is committed) to the remote.
+    /// A branch without an upstream is pushed with `-u`, so later pushes know where to go.
     pub(super) fn git_push(&mut self) {
-        self.git_command(vec!["push".into()], tr("Pushed"));
+        let Some(git) = &self.git else {
+            return;
+        };
+        if git.upstream.is_some() {
+            return self.git_command(vec!["push".into()], tr("Pushed"));
+        }
+        match liman_core::git::push_remote(&git.root, None) {
+            Some((remote, _)) => self.git_command(
+                vec!["push".into(), "-u".into(), remote, "HEAD".into()],
+                tr("Pushed"),
+            ),
+            None => {
+                self.message =
+                    Some(tr("No remote yet: git remote add origin <URL> in the terminal").into())
+            }
+        }
     }
 
     pub(super) fn git_pull(&mut self) {
@@ -211,12 +230,14 @@ impl App {
     pub(super) fn toggle_git_panel(&mut self) {
         if self.git_panel.is_some() {
             self.git_panel = None;
-        } else if self.git.is_some() {
+        } else if let Some(git) = &self.git {
+            let remote = liman_core::git::push_remote(&git.root, git.upstream.as_deref());
             self.git_panel = Some(GitPanel {
                 selected: 0,
                 diff: Vec::new(),
                 diff_for: None,
                 scroll: 0,
+                remote,
             });
             self.request_git();
         } else {
