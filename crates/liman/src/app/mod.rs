@@ -7,7 +7,7 @@ mod preview;
 mod tabs;
 mod terminal_mode;
 
-pub use actions::{Action, Menu};
+pub use actions::{Action, HELP, Menu};
 pub use file_ops::{ClipMode, Clipboard, Dialog, JobStatus, RenameInput};
 pub use git_ops::GitPanel;
 pub use preview::{PreviewKey, PreviewPane};
@@ -561,49 +561,27 @@ impl App {
             self.on_filter_key(key);
             return;
         }
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // Keys that are actions run exactly what the palette and the menus run.
+        if let Some(action) = actions::for_key(key) {
+            return self.run_action(action);
+        }
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            // Folder navigation that works in every view. Alt+arrows move in space: ← / ↑ parent,
-            // → enters the selected folder, ↓ opens the selection. History is Ctrl+← / Ctrl+→
-            // (fm-research LOG 2026-10-05: back/forward on Alt+← sent you back *into* a folder).
-            KeyCode::Char('t') if ctrl => self.new_tab(),
-            KeyCode::Char('r') if !ctrl && !alt => self.open_reader(),
-            KeyCode::Char('w') if ctrl => self.close_tab(),
-            KeyCode::Left | KeyCode::Up if alt => self.go_up(),
+            // Alt+arrows move in space: ← / ↑ parent (an action), → enters the selected folder,
+            // ↓ opens the selection. History is Ctrl+← / Ctrl+→ (fm-research LOG 2026-10-05).
             KeyCode::Right if alt => {
                 if self.selected_entry().is_some_and(|e| e.is_dir) {
                     self.activate_selected();
                 }
             }
-            KeyCode::Left if ctrl => self.go_back(),
-            KeyCode::Right if ctrl => self.go_forward(),
             KeyCode::Down if alt => self.activate_selected(),
-            // GUI shortcuts: Ctrl+C copies, so quitting is q or Ctrl+Q.
-            KeyCode::Char('q') => self.running = false,
-            KeyCode::Char('c') if ctrl => self.copy_to_clipboard(ClipMode::Copy),
-            KeyCode::Char('x') if ctrl => self.copy_to_clipboard(ClipMode::Cut),
-            KeyCode::Char('v') if ctrl => self.paste(),
-            KeyCode::Char('a') if ctrl => self.mark_all(),
-            KeyCode::Char('z') if ctrl => self.undo(),
-            KeyCode::Delete if key.modifiers.contains(KeyModifiers::SHIFT) => self.ask_delete(),
-            KeyCode::Delete => self.trash_targets(),
-            KeyCode::F(2) => self.begin_rename(),
+            KeyCode::Char('p') if ctrl => self.open_palette(),
             KeyCode::Char(' ') if ctrl => self.toggle_mark_here(),
             KeyCode::Char(' ') => self.toggle_mark(),
             KeyCode::Esc if !self.filter.is_empty() => self.set_filter(String::new()),
             KeyCode::Esc if self.results.is_some() => self.go_up(),
             KeyCode::Esc => self.marked.clear(),
-            KeyCode::Enter if alt => self.paths_to_terminal(),
-            KeyCode::Char('h') if ctrl => self.toggle_hidden(),
-            KeyCode::Char('.') => self.toggle_hidden(),
-            KeyCode::Char('f') if ctrl => self.search_input = Some(String::new()),
-            KeyCode::Char('d') if ctrl => self.toggle_bookmark(),
-            KeyCode::Char('p') if ctrl => self.open_palette(),
-            KeyCode::Char('g') if ctrl => self.toggle_git_panel(),
-            // Ctrl+Shift+N / Ctrl+Shift+C arrive as Ctrl+N / Ctrl+C in most terminals: use Ctrl+N, Alt+C.
-            KeyCode::Char('n') if ctrl => self.new_folder(),
-            KeyCode::Char('c') if alt => self.copy_paths_osc52(),
             // Shift+arrows / Home / End / PgUp / PgDn: mark everything from where Shift started.
             KeyCode::Up
             | KeyCode::Down
@@ -637,29 +615,7 @@ impl App {
             KeyCode::Home | KeyCode::Char('g') => self.select_row(0),
             KeyCode::End | KeyCode::Char('G') => self.select_row(usize::MAX),
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.activate_selected(),
-            KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => self.go_up(),
-            KeyCode::Char('/') => self.filter_editing = true,
-            KeyCode::Char('~') => self.load(self.places.home.clone()),
-            KeyCode::Char('v') => self.toggle_compact(),
-            KeyCode::Char('s') => {
-                let order = liman_core::sort::SortOrder {
-                    key: self.sort.key.next(),
-                    descending: false,
-                };
-                self.set_sort(order);
-            }
-            KeyCode::Char('S') => {
-                let order = liman_core::sort::SortOrder {
-                    descending: !self.sort.descending,
-                    ..self.sort
-                };
-                self.set_sort(order);
-            }
-            KeyCode::Char('t') => self.open_theme_picker(),
-            KeyCode::Char('?') => self.help_open = true,
-            // Ctrl variants arrive only in terminals that report them; plain keys always work.
-            KeyCode::Char('+' | '=') => self.zoom(1),
-            KeyCode::Char('-') => self.zoom(-1),
+            KeyCode::Left | KeyCode::Char('h') => self.go_up(),
             _ => self.dirty = false,
         }
     }

@@ -353,7 +353,7 @@ fn render_menu(frame: &mut Frame, app: &mut App) {
     {
         let available = availability.get(i).copied().unwrap_or(true);
         let color = if available { theme::fg() } else { theme::dim() };
-        let keys = action.keys();
+        let keys = tr(action.keys());
         let width = usize::from(list.width);
         let label_width = width.saturating_sub(keys.chars().count() + 2);
         let mut line = Line::from(vec![
@@ -374,67 +374,57 @@ fn render_menu(frame: &mut Frame, app: &mut App) {
     }
 }
 
-/// The `?` window: keys and what they do (English; shown through `tr`).
-const HELP_KEYS: &[(&str, &str)] = &[
-    ("Enter / double click", "open"),
-    ("Bksp / Alt+← / Alt+↑", "parent folder"),
-    ("Alt+→ / Alt+↓", "into the folder / open"),
-    ("Ctrl+← / Ctrl+→", "back / forward"),
-    ("Tab / Shift+Tab", "Places · Files · Preview · Terminal"),
-    ("v", "small list ↔ large view"),
-    ("+ / -  (Ctrl+wheel)", "zoom"),
-    ("/", "filter"),
-    ("Ctrl+F", "search in subfolders"),
-    ("Ctrl+D", "bookmark folder (again: remove)"),
-    ("Ctrl+H / .", "hidden files"),
-    ("s / S  (header click)", "sort by / reverse"),
-    ("Space / Ctrl+A", "mark / mark all"),
-    ("Ctrl+click / Shift+click", "mark one / mark a range"),
-    ("Shift+arrows / Home / End", "mark a range"),
-    ("Ctrl+Space", "mark one, stay in place"),
-    ("drag onto a folder", "move (hold Ctrl: copy)"),
-    ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
-    ("Del / F2 / Ctrl+Z", "trash / rename / undo"),
-    ("Shift+Del", "delete for good (asks first)"),
-    ("Ctrl+T / Ctrl+W", "new tab / close tab"),
-    ("Alt+1…9 / wheel on the tabs", "go to tab"),
-    ("middle click on a folder", "open it in a new tab"),
-    ("middle click on a tab", "close the tab"),
-    ("F3", "preview panel"),
-    ("r", "read the file full screen"),
-    ("F4 / Ctrl+O", "terminal panel / full screen"),
-    ("Alt+Enter", "selected paths into the terminal"),
-    ("Ctrl+↑ / Ctrl+↓", "terminal size"),
-    ("t", "theme"),
-    ("Ctrl+P / right click", "all commands / menu"),
-    ("Ctrl+N / Alt+C", "new folder / copy path (works over SSH)"),
-    (
-        "Ctrl+G",
-        "git: changes, diff, stage, commit, push, pull, branch",
-    ),
-    ("~", "home"),
-    ("q", "quit"),
-];
-
+/// The `?` window, from [`crate::app::HELP`]: one column when it fits the screen's height, else
+/// two side by side (descriptions are cut on a narrow screen rather than lines lost at the bottom).
 fn render_help(frame: &mut Frame) {
+    let items: Vec<(&str, &str)> = crate::app::HELP.iter().map(|h| h.texts()).collect();
+    let screen = frame.area();
+    let columns = if items.len() + 4 <= usize::from(screen.height) {
+        1
+    } else {
+        2
+    };
+    let rows = items.len().div_ceil(columns);
+    let width = |text: &str| text.chars().count();
+    // Each column as wide as its longest key and description.
+    let chunks: Vec<&[(&str, &str)]> = items.chunks(rows).collect();
+    let sizes: Vec<(usize, usize)> = chunks
+        .iter()
+        .map(|chunk| {
+            let keys = chunk.iter().map(|(k, _)| width(k)).max().unwrap_or(0);
+            let what = chunk.iter().map(|(_, w)| width(w)).max().unwrap_or(0);
+            (keys, what)
+        })
+        .collect();
+    let total: usize = sizes.iter().map(|(k, w)| k + 3 + w).sum::<usize>() + 2 * (columns - 1);
     let inner = popup(
         frame,
         tr(" Keys · any key closes "),
-        84,
-        HELP_KEYS.len() as u16 + 4,
+        (total + 4) as u16,
+        rows as u16 + 4,
     );
-    let lines: Vec<Line> = HELP_KEYS
-        .iter()
-        .map(|(k, what)| {
-            Line::from(vec![
-                Span::raw(format!(" {:<26}", tr(k)))
-                    .fg(theme::accent())
-                    .bold(),
-                Span::raw(tr(what)).fg(theme::fg()),
-            ])
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), inner.inner(Margin::new(1, 1)));
+    let body = inner.inner(Margin::new(1, 1));
+    let areas = Layout::horizontal(
+        sizes
+            .iter()
+            .map(|(k, w)| Constraint::Length((k + 3 + w) as u16)),
+    )
+    .spacing(2)
+    .split(body);
+    for ((chunk, (key_width, _)), area) in chunks.iter().zip(&sizes).zip(areas.iter()) {
+        let lines: Vec<Line> = chunk
+            .iter()
+            .map(|(keys, what)| {
+                Line::from(vec![
+                    Span::raw(format!(" {keys:<key_width$}  "))
+                        .fg(theme::accent())
+                        .bold(),
+                    Span::raw(*what).fg(theme::fg()),
+                ])
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(lines), *area);
+    }
 }
 
 fn render_screen(frame: &mut Frame, app: &mut App) {
@@ -952,7 +942,9 @@ mod tests {
     #[test]
     fn help_and_hints_have_turkish() {
         use liman_core::i18n::turkish;
-        let all = HELP_KEYS
+        // The English texts (the language is global; other tests may switch it).
+        let help: Vec<(&str, &str)> = crate::app::HELP.iter().map(|h| h.english()).collect();
+        let all = help
             .iter()
             .chain(HINTS)
             .chain(FILTER_HINTS)

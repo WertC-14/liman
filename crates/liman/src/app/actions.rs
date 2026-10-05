@@ -1,10 +1,11 @@
-//! Every user action in one list. The command palette (Ctrl+P), the right-click menu and the key
-//! overview use it, so a new action shows up everywhere at once.
+//! Every user action in one list. Keys (`for_key`), the command palette (Ctrl+P), the right-click
+//! menu and the key overview (`HELP`) use it, so a new action shows up everywhere at once.
 
 use liman_core::i18n::{tr, trf};
 use std::io::Write;
 
 use liman_core::job::Job;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, Listing, TermMode, View};
 
@@ -191,7 +192,7 @@ impl Action {
 
     pub const fn keys(self) -> &'static str {
         match self {
-            Self::Open => "Enter",
+            Self::Open => "Enter / double click",
             Self::PathsToTerminal => "Alt+Enter",
             Self::OpenTerminalHere => "F4",
             Self::Copy => "Ctrl+C",
@@ -207,27 +208,27 @@ impl Action {
             Self::Undo => "Ctrl+Z",
             Self::Search => "Ctrl+F",
             Self::Filter => "/",
-            Self::ToggleHidden => "Ctrl+H",
-            Self::SortNext => "s",
+            Self::ToggleHidden => "Ctrl+H / .",
+            Self::SortNext => "s  (header click)",
             Self::SortReverse => "S",
             Self::SmallLarge => "v",
-            Self::ZoomIn => "+",
+            Self::ZoomIn => "+  (Ctrl+wheel)",
             Self::ZoomOut => "-",
             Self::Back => "Ctrl+←",
             Self::Forward => "Ctrl+→",
-            Self::Up => "Bksp",
+            Self::Up => "Bksp / Alt+↑",
             Self::Home => "~",
             Self::Recent => "",
             Self::NewTab => "Ctrl+T",
             Self::CloseTab => "Ctrl+W",
-            Self::NextTab => "Alt+1…9",
+            Self::NextTab => "",
             Self::Preview => "F3",
             Self::Read => "r",
             Self::TerminalPanel => "F4",
             Self::TerminalFullScreen => "Ctrl+O",
             Self::Theme => "t",
             Self::Keys => "?",
-            Self::Quit => "q",
+            Self::Quit => "q / Ctrl+Q",
             Self::GitPanel => "Ctrl+G",
             Self::GitStage | Self::GitUnstage => "Ctrl+G Space",
             Self::GitDiscard => "Ctrl+G d",
@@ -238,6 +239,127 @@ impl Action {
         }
     }
 }
+
+/// The action a key press runs in the file view, if it is one. Keys that only move the
+/// selection or depend on the view (arrows, Space, Esc) are handled by the app itself.
+pub fn for_key(key: KeyEvent) -> Option<Action> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    Some(match key.code {
+        KeyCode::Char('t') if ctrl => Action::NewTab,
+        KeyCode::Char('w') if ctrl => Action::CloseTab,
+        KeyCode::Char('r') if !ctrl && !alt => Action::Read,
+        KeyCode::Left | KeyCode::Up if alt => Action::Up,
+        KeyCode::Left if ctrl => Action::Back,
+        KeyCode::Right if ctrl => Action::Forward,
+        // GUI shortcuts: Ctrl+C copies, so quitting is q or Ctrl+Q.
+        KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('c') if ctrl => Action::Copy,
+        KeyCode::Char('x') if ctrl => Action::Cut,
+        KeyCode::Char('v') if ctrl => Action::Paste,
+        KeyCode::Char('a') if ctrl => Action::MarkAll,
+        KeyCode::Char('z') if ctrl => Action::Undo,
+        KeyCode::Delete if shift => Action::DeleteForGood,
+        KeyCode::Delete => Action::Trash,
+        KeyCode::F(2) => Action::Rename,
+        KeyCode::Enter if alt => Action::PathsToTerminal,
+        KeyCode::Char('h') if ctrl => Action::ToggleHidden,
+        KeyCode::Char('.') => Action::ToggleHidden,
+        KeyCode::Char('f') if ctrl => Action::Search,
+        KeyCode::Char('d') if ctrl => Action::Bookmark,
+        KeyCode::Char('g') if ctrl => Action::GitPanel,
+        // Ctrl+Shift+N / Ctrl+Shift+C arrive as Ctrl+N / Ctrl+C in most terminals: Ctrl+N, Alt+C.
+        KeyCode::Char('n') if ctrl => Action::NewFolder,
+        KeyCode::Char('c') if alt => Action::CopyPath,
+        KeyCode::Char('/') => Action::Filter,
+        KeyCode::Char('~') => Action::Home,
+        KeyCode::Char('v') => Action::SmallLarge,
+        KeyCode::Char('s') => Action::SortNext,
+        KeyCode::Char('S') => Action::SortReverse,
+        KeyCode::Char('t') => Action::Theme,
+        KeyCode::Char('?') => Action::Keys,
+        // Ctrl variants arrive only in terminals that report them; plain keys always work.
+        KeyCode::Char('+' | '=') => Action::ZoomIn,
+        KeyCode::Char('-') => Action::ZoomOut,
+        KeyCode::Backspace => Action::Up,
+        _ => return None,
+    })
+}
+
+/// One line of the `?` window: an action (its keys and label come from [`Action`]) or a key or
+/// mouse gesture that is not an action of its own.
+pub enum Help {
+    Action(Action),
+    Keys(&'static str, &'static str),
+}
+
+impl Help {
+    /// Keys and what they do, in English (the keys of the translation table).
+    pub fn english(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::Action(a) => (a.keys(), a.label_en()),
+            Self::Keys(keys, what) => (keys, what),
+        }
+    }
+
+    /// Keys and what they do, in the interface language.
+    pub fn texts(&self) -> (&'static str, &'static str) {
+        let (keys, what) = self.english();
+        (tr(keys), tr(what))
+    }
+}
+
+/// The `?` window, in reading order.
+pub const HELP: &[Help] = &[
+    Help::Action(Action::Open),
+    Help::Action(Action::Up),
+    Help::Keys("Alt+→ / Alt+↓", "into the folder / open"),
+    Help::Action(Action::Back),
+    Help::Action(Action::Forward),
+    Help::Action(Action::Home),
+    Help::Keys("Tab / Shift+Tab", "Places · Files · Preview · Terminal"),
+    Help::Action(Action::SmallLarge),
+    Help::Action(Action::ZoomIn),
+    Help::Action(Action::ZoomOut),
+    Help::Action(Action::Filter),
+    Help::Action(Action::Search),
+    Help::Action(Action::Bookmark),
+    Help::Action(Action::ToggleHidden),
+    Help::Action(Action::SortNext),
+    Help::Action(Action::SortReverse),
+    Help::Keys("Space", "mark and move down"),
+    Help::Keys("Ctrl+Space", "mark one, stay in place"),
+    Help::Action(Action::MarkAll),
+    Help::Keys("Ctrl+click / Shift+click", "mark one / mark a range"),
+    Help::Keys("Shift+arrows / Home / End", "mark a range"),
+    Help::Keys("drag onto a folder", "move (hold Ctrl: copy)"),
+    Help::Action(Action::Copy),
+    Help::Action(Action::Cut),
+    Help::Action(Action::Paste),
+    Help::Action(Action::Trash),
+    Help::Action(Action::Rename),
+    Help::Action(Action::Undo),
+    Help::Action(Action::DeleteForGood),
+    Help::Action(Action::NewFolder),
+    Help::Action(Action::CopyPath),
+    Help::Action(Action::NewTab),
+    Help::Action(Action::CloseTab),
+    Help::Keys("Alt+1…9 / wheel on the tabs", "go to tab"),
+    Help::Keys("middle click on a folder", "open it in a new tab"),
+    Help::Keys("middle click on a tab", "close the tab"),
+    Help::Action(Action::Preview),
+    Help::Action(Action::Read),
+    Help::Action(Action::TerminalPanel),
+    Help::Action(Action::TerminalFullScreen),
+    Help::Action(Action::PathsToTerminal),
+    Help::Keys("Ctrl+↑ / Ctrl+↓", "terminal size"),
+    Help::Action(Action::GitPanel),
+    Help::Action(Action::Theme),
+    Help::Keys("Ctrl+P / right click", "all commands / menu"),
+    Help::Action(Action::Keys),
+    Help::Action(Action::Quit),
+];
 
 /// Actions whose label contains every word of `query` (case-insensitive), in list order.
 pub fn matching(query: &str) -> Vec<Action> {
@@ -438,6 +560,65 @@ mod tests {
                 action
             );
         }
+    }
+
+    #[test]
+    fn the_key_overview_lists_every_action_with_a_key() {
+        // Git actions live inside the git panel (Ctrl+G, listed); F4 is listed once.
+        let elsewhere = [
+            Action::GitStage,
+            Action::GitUnstage,
+            Action::GitDiscard,
+            Action::GitCommit,
+            Action::GitPush,
+            Action::GitPull,
+            Action::GitBranch,
+            Action::OpenTerminalHere,
+        ];
+        for action in Action::ALL {
+            let listed = HELP
+                .iter()
+                .any(|h| matches!(h, Help::Action(a) if *a == action));
+            if !action.keys().is_empty() && !elsewhere.contains(&action) {
+                assert!(listed, "{action:?} is missing from the ? window");
+            }
+        }
+        for item in HELP {
+            if let Help::Keys(_, what) = item {
+                assert!(liman_core::i18n::turkish(what).is_some(), "{what}");
+            }
+        }
+    }
+
+    #[test]
+    fn keys_run_their_actions() {
+        let key = |code, modifiers| KeyEvent::new(code, modifiers);
+        let none = KeyModifiers::NONE;
+        let ctrl = KeyModifiers::CONTROL;
+        let alt = KeyModifiers::ALT;
+        assert_eq!(for_key(key(KeyCode::Char('c'), ctrl)), Some(Action::Copy));
+        assert_eq!(
+            for_key(key(KeyCode::Char('c'), alt)),
+            Some(Action::CopyPath)
+        );
+        assert_eq!(for_key(key(KeyCode::Char('v'), ctrl)), Some(Action::Paste));
+        assert_eq!(
+            for_key(key(KeyCode::Char('v'), none)),
+            Some(Action::SmallLarge)
+        );
+        assert_eq!(for_key(key(KeyCode::Char('t'), ctrl)), Some(Action::NewTab));
+        assert_eq!(for_key(key(KeyCode::Char('t'), none)), Some(Action::Theme));
+        assert_eq!(for_key(key(KeyCode::Left, ctrl)), Some(Action::Back));
+        assert_eq!(for_key(key(KeyCode::Left, alt)), Some(Action::Up));
+        assert_eq!(for_key(key(KeyCode::Backspace, none)), Some(Action::Up));
+        assert_eq!(
+            for_key(key(KeyCode::Delete, KeyModifiers::SHIFT)),
+            Some(Action::DeleteForGood)
+        );
+        assert_eq!(for_key(key(KeyCode::Char('r'), ctrl)), None);
+        // Movement is not an action.
+        assert_eq!(for_key(key(KeyCode::Left, none)), None);
+        assert_eq!(for_key(key(KeyCode::Char(' '), none)), None);
     }
 
     #[test]
