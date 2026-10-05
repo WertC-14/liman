@@ -166,7 +166,6 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "Mark all" => "Tümünü işaretle",
         "Undo" => "Geri al",
         "Search in subfolders" => "Alt klasörlerde ara",
-        "Filter this folder" => "Bu klasörü süz",
         "Show / hide hidden files" => "Gizli dosyaları göster / gizle",
         "Sort by next column" => "Sonraki sütuna göre sırala",
         "Reverse sort order" => "Sıralamayı ters çevir",
@@ -324,7 +323,6 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "Loading…" => "Yükleniyor…",
         "Cannot open this folder: {}" => "Bu klasör açılamıyor: {}",
         "Folder is empty" => "Klasör boş",
-        "Nothing matches “{}”" => "“{}” ile eşleşen yok",
         " Terminal · Ctrl+O back to files " => " Terminal · Ctrl+O dosyalara dön ",
         " Terminal · Tab on empty line: next panel · Ctrl+↑↓ size · F4 close · Ctrl+O full screen " => {
             " Terminal · boş satırda Tab: sonraki panel · Ctrl+↑↓ boyut · F4 kapat · Ctrl+O tam ekran "
@@ -341,9 +339,6 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         // status bar hints and the help window (keys, then what they do)
         "theme" => "tema",
         "keep" => "vazgeç",
-        " / Filter this folder: " => " / Bu klasörü süz: ",
-        " · {} of {}" => " · {} / {}",
-        "Search subfolders too" => "Alt klasörlerde de ara",
         "“{}” is protected: it cannot be removed or moved" => {
             "“{}” korunuyor: silinemez, taşınamaz"
         }
@@ -359,12 +354,9 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "Permissions" => "İzinler",
         "Markdown" => "Markdown",
         "Help" => "Yardım",
-        "Filter" => "Süz",
         "Search" => "Ara",
         "Hidden" => "Gizli",
         "Commands" => "Komutlar",
-        "Keep filter" => "Süzgeci tut",
-        "Clear" => "Temizle",
         "Scroll" => "Kaydır",
         "Start / end" => "Baş / son",
         "Full screen" => "Tam ekran",

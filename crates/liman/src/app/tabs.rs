@@ -21,17 +21,11 @@ pub struct TabState {
     pub visible: Vec<usize>,
     /// Selected row (index into `visible`) and scroll offset; kept between frames.
     pub table: TableState,
-    /// Case-insensitive substring filter typed after `/`.
-    pub filter: String,
     /// Folders visited before / after the current one (Ctrl+← / Ctrl+→).
     pub back_stack: Vec<PathBuf>,
     pub forward_stack: Vec<PathBuf>,
     /// Last selected entry per folder, restored when coming back.
     pub remembered: HashMap<PathBuf, String>,
-    /// Lower-case entry names, made once per listing for the filter.
-    pub names_lower: Vec<String>,
-    /// The (lower-case) filter `visible` was computed for.
-    pub visible_for: String,
     /// Entries marked with Space (or Ctrl+A) for a multi-item operation.
     pub marked: HashSet<PathBuf>,
     /// Set while the view shows files found by a shell command instead of a folder.
@@ -57,12 +51,9 @@ impl TabState {
             listing: Listing::Loading,
             visible: Vec::new(),
             table: TableState::default(),
-            filter: String::new(),
             back_stack: Vec::new(),
             forward_stack: Vec::new(),
             remembered: HashMap::new(),
-            names_lower: Vec::new(),
-            visible_for: String::new(),
             marked: HashSet::new(),
             results: None,
             terminal: None,
@@ -214,7 +205,6 @@ impl App {
         self.results_pending = None;
         self.load_from_shell = false;
         self.moving_in_history = false;
-        self.filter_editing = false;
         self.rename = None;
         self.search_input = None;
         self.path_input = None;

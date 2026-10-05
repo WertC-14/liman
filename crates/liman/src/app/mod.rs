@@ -102,8 +102,6 @@ pub struct App {
     moving_in_history: bool,
     /// Order of folder listings (`s` / `S` / header click); saved in the config.
     pub sort: liman_core::sort::SortOrder,
-    /// True while the user is typing the filter.
-    pub filter_editing: bool,
     /// One-line message for the status bar (cleared on the next key press).
     pub message: Option<String>,
     /// A terminal program the main loop should run in the foreground (set by Enter on a file over SSH).
@@ -214,7 +212,6 @@ impl App {
             dirty: true,
             moving_in_history: false,
             sort: liman_core::sort::SortOrder::default(),
-            filter_editing: false,
             message: None,
             external: None,
             // The grid of type-colored boxes is what sets liman apart, so it is the first thing you see.
@@ -339,8 +336,6 @@ impl App {
         self.tab.listing = Listing::Loading;
         self.tab.visible.clear();
         self.tab.marked.clear();
-        self.tab.filter.clear();
-        self.filter_editing = false;
         self.dirty = true;
         self.loading_path = Some(path.to_path_buf());
         self.listing_started = Instant::now();
@@ -542,10 +537,6 @@ impl App {
         if self.path_input.is_some() {
             return self.on_path_key(key);
         }
-        if self.filter_editing {
-            self.on_filter_key(key);
-            return;
-        }
         // Keys that are actions run exactly what the palette and the menus run.
         if let Some(action) = actions::for_key(key) {
             return self.run_action(action);
@@ -564,7 +555,6 @@ impl App {
             KeyCode::Char('p') if ctrl => self.open_palette(),
             KeyCode::Char(' ') if ctrl => self.toggle_mark_here(),
             KeyCode::Char(' ') => self.toggle_mark(),
-            KeyCode::Esc if !self.tab.filter.is_empty() => self.set_filter(String::new()),
             KeyCode::Esc if self.tab.results.is_some() => self.go_up(),
             KeyCode::Esc => self.tab.marked.clear(),
             // Shift+arrows / Home / End / PgUp / PgDn: mark everything from where Shift started.
@@ -602,38 +592,6 @@ impl App {
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => self.activate_selected(),
             KeyCode::Left | KeyCode::Char('h') => self.go_up(),
             _ => self.dirty = false,
-        }
-    }
-
-    fn on_filter_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => {
-                self.filter_editing = false;
-                self.set_filter(String::new());
-            }
-            KeyCode::Enter => self.filter_editing = false,
-            KeyCode::Backspace if self.tab.filter.is_empty() => self.filter_editing = false,
-            KeyCode::Backspace => {
-                let mut f = self.tab.filter.clone();
-                f.pop();
-                self.set_filter(f);
-            }
-            // The same text, searched in the subfolders too (Ctrl+F).
-            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let text = std::mem::take(&mut self.tab.filter);
-                self.filter_editing = false;
-                self.set_filter(String::new());
-                self.search_input = Some(text);
-                self.search_live();
-            }
-            // Arrows still move the selection while typing.
-            KeyCode::Down => self.move_selection(1),
-            KeyCode::Up => self.move_selection(-1),
-            KeyCode::Char(c) if is_typing(key) => {
-                let f = format!("{}{c}", self.tab.filter);
-                self.set_filter(f);
-            }
-            _ => {}
         }
     }
 
@@ -1337,8 +1295,6 @@ impl App {
         if let Listing::Ready(entries) = &mut self.tab.listing {
             liman_core::sort::sort_with(entries, order);
         }
-        self.tab.names_lower.clear();
-        self.tab.visible_for.clear();
         self.refresh_visible();
         let row = keep
             .and_then(|p| self.visible_entries().position(|e| e.path == p))
@@ -1567,9 +1523,6 @@ impl App {
         });
         self.tab.listing = Listing::Ready(Vec::new());
         self.tab.visible.clear();
-        self.tab.names_lower.clear();
-        self.tab.visible_for.clear();
-        self.tab.filter.clear();
         self.tab.marked.clear();
         self.tab.table = TableState::default();
         // Search the folder itself, not inside a previous result list.
@@ -1698,39 +1651,13 @@ impl App {
         self.load(parent);
     }
 
-    fn set_filter(&mut self, filter: String) {
-        self.tab.filter = filter;
-        self.refresh_visible();
-        self.select_row(0);
-    }
-
-    /// Recomputes `visible` from the filter. Lower-case names are made once per listing, when a
-    /// filter is first typed; when the filter only got longer, the search stays inside the
-    /// previous matches.
+    /// The display order: every entry of the listing, as sorted.
     fn refresh_visible(&mut self) {
-        let Listing::Ready(entries) = &self.tab.listing else {
-            self.tab.visible.clear();
-            return;
+        let len = match &self.tab.listing {
+            Listing::Ready(entries) => entries.len(),
+            _ => 0,
         };
-        let needle = self.tab.filter.to_lowercase();
-        if needle.is_empty() {
-            self.tab.visible = (0..entries.len()).collect();
-            self.tab.visible_for.clear();
-            return;
-        }
-        // Made on the first filter key, not for every listing.
-        if self.tab.names_lower.len() != entries.len() {
-            self.tab.names_lower = entries.iter().map(|e| e.name.to_lowercase()).collect();
-        }
-        let narrowing =
-            !self.tab.visible_for.is_empty() && needle.starts_with(&self.tab.visible_for);
-        let matches = |i: &usize| self.tab.names_lower[*i].contains(&needle);
-        self.tab.visible = if narrowing {
-            self.tab.visible.iter().copied().filter(matches).collect()
-        } else {
-            (0..entries.len()).filter(matches).collect()
-        };
-        self.tab.visible_for = needle;
+        self.tab.visible = (0..len).collect();
     }
 
     // ---- worker results ----
@@ -1854,8 +1781,6 @@ impl App {
                 self.options,
             );
         }
-        self.tab.names_lower.clear();
-        self.tab.visible_for.clear();
         self.refresh_visible();
         self.tab.table = TableState::default();
         let came_from = self.tab.select_after_load.take();
@@ -2036,30 +1961,6 @@ mod tests {
         });
         assert_eq!(app.tab.cwd, PathBuf::from("/data"));
         assert_eq!(selected_name(&app), "Projects");
-    }
-
-    #[test]
-    fn filter_narrows_the_list_and_esc_clears_it() {
-        let (mut app, _rx) = app();
-        app.handle(key(KeyCode::Char('/')));
-        for c in ['P', 'r', 'o'] {
-            app.handle(key(KeyCode::Char(c)));
-        }
-        assert_eq!(app.tab.filter, "Pro");
-        assert_eq!(app.entry_count(), Some(1));
-        assert_eq!(selected_name(&app), "Projects");
-
-        app.handle(key(KeyCode::Enter)); // stop typing, keep the filter
-        assert!(!app.filter_editing);
-        app.handle(key(KeyCode::Char('q'))); // 'q' is a command again
-        assert!(!app.running);
-
-        let (mut app, _rx) = self::app();
-        app.handle(key(KeyCode::Char('/')));
-        app.handle(key(KeyCode::Char('x')));
-        app.handle(key(KeyCode::Esc));
-        assert_eq!(app.tab.filter, "");
-        assert_eq!(app.entry_count(), Some(5));
     }
 
     #[test]
@@ -2573,21 +2474,6 @@ mod tests {
             Sidebar::dir_row(app.sidebar.len(), a - 1)
         );
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn ctrl_f_in_the_filter_searches_the_same_text_below() {
-        let (mut app, _rx) = app();
-        app.handle(key(KeyCode::Char('/')));
-        app.handle(key(KeyCode::Char('r')));
-        assert_eq!(app.entry_count(), Some(2)); // Projects, c.rs
-        app.handle(AppEvent::Input(Event::Key(KeyEvent::new(
-            KeyCode::Char('f'),
-            KeyModifiers::CONTROL,
-        ))));
-        assert!(!app.filter_editing && app.tab.filter.is_empty());
-        assert_eq!(app.search_input.as_deref(), Some("r"));
-        assert!(app.tab.results.as_ref().is_some_and(|r| r.running));
     }
 
     #[test]

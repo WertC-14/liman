@@ -26,7 +26,6 @@ pub enum Action {
     MarkAll,
     Undo,
     Search,
-    Filter,
     ToggleHidden,
     SortNext,
     SortReverse,
@@ -60,7 +59,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 46] = [
+    pub const ALL: [Action; 45] = [
         Self::GitPanel,
         Self::GitStage,
         Self::GitUnstage,
@@ -84,7 +83,6 @@ impl Action {
         Self::MarkAll,
         Self::Undo,
         Self::Search,
-        Self::Filter,
         Self::ToggleHidden,
         Self::SortNext,
         Self::SortReverse,
@@ -159,7 +157,6 @@ impl Action {
             Self::MarkAll => "Mark all",
             Self::Undo => "Undo",
             Self::Search => "Search in subfolders",
-            Self::Filter => "Filter this folder",
             Self::ToggleHidden => "Show / hide hidden files",
             Self::SortNext => "Sort by next column",
             Self::SortReverse => "Reverse sort order",
@@ -210,7 +207,6 @@ impl Action {
             Self::MarkAll => "Ctrl+A",
             Self::Undo => "Ctrl+Z",
             Self::Search => "Ctrl+F",
-            Self::Filter => "/",
             Self::ToggleHidden => "Ctrl+H / .",
             Self::SortNext => "s  (header click)",
             Self::SortReverse => "S",
@@ -277,7 +273,6 @@ pub fn for_key(key: KeyEvent) -> Option<Action> {
         // Ctrl+Shift+N / Ctrl+Shift+C arrive as Ctrl+N / Ctrl+C in most terminals: Ctrl+N, Alt+C.
         KeyCode::Char('n') if ctrl => Action::NewFolder,
         KeyCode::Char('c') if alt => Action::CopyPath,
-        KeyCode::Char('/') => Action::Filter,
         KeyCode::Char('~') => Action::Home,
         KeyCode::Char('v') => Action::SmallLarge,
         KeyCode::Char('s') => Action::SortNext,
@@ -328,7 +323,6 @@ pub const HELP: &[Help] = &[
     Help::Action(Action::SmallLarge),
     Help::Action(Action::ZoomIn),
     Help::Action(Action::ZoomOut),
-    Help::Action(Action::Filter),
     Help::Action(Action::Search),
     Help::Action(Action::Bookmark),
     Help::Action(Action::ToggleHidden),
@@ -405,7 +399,6 @@ impl App {
             Action::MarkAll => self.mark_all(),
             Action::Undo => self.undo(),
             Action::Search => self.search_input = Some(String::new()),
-            Action::Filter => self.filter_editing = true,
             Action::ToggleHidden => self.toggle_hidden(),
             Action::SortNext => {
                 let order = SortOrder {

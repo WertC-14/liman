@@ -745,9 +745,6 @@ fn render_list(frame: &mut Frame, app: &mut App, area: Rect) {
         Listing::Loading => tr("Loading…").to_string(),
         Listing::Failed(err) => trf("Cannot open this folder: {}", &[err]),
         Listing::Ready(entries) if entries.is_empty() => tr("Folder is empty").to_string(),
-        Listing::Ready(_) if app.tab.visible.is_empty() => {
-            trf("Nothing matches “{}”", &[&app.tab.filter])
-        }
         Listing::Ready(entries) => {
             app.list_area = area;
             app.drawn_view = fitting_view(app.view, area);
@@ -880,16 +877,10 @@ fn fitting_view(wanted: View, area: Rect) -> View {
 /// Status bar key hints (English; shown through `tr`).
 const HINTS: &[(&str, &str)] = &[
     ("?", "Help"),
-    ("/", "Filter"),
     ("Ctrl+F", "Search"),
     ("Ctrl+H", "Hidden"),
     ("Ctrl+P", "Commands"),
     ("q", "Quit"),
-];
-const FILTER_HINTS: &[(&str, &str)] = &[
-    ("Enter", "Keep filter"),
-    ("Esc", "Clear"),
-    ("Ctrl+F", "Search subfolders too"),
 ];
 const PREVIEW_HINTS: &[(&str, &str)] = &[
     ("↑↓ PgUp/PgDn", "Scroll"),
@@ -970,22 +961,8 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
     // Left: what you are looking at; right: a few keys (cardea style). On a narrow screen the
     // keys go first, the information stays.
-    let filtering = app.filter_editing || !app.tab.filter.is_empty();
-    if filtering {
-        // Say what the filter does: it hides names in this folder (Ctrl+F searches below).
-        spans.push(Span::raw(tr(" / Filter this folder: ")).fg(theme::dim()));
-        spans.push(Span::raw(app.tab.filter.clone()).fg(theme::fg()).bold());
-        if app.filter_editing {
-            spans.push(Span::raw("▏").fg(theme::fg()));
-        }
-    }
-    if let (Some(shown), Listing::Ready(all)) = (app.entry_count(), &app.tab.listing) {
-        let text = if filtering {
-            trf(" · {} of {}", &[&shown, &format::items(all.len())])
-        } else {
-            format!(" {}", format::items(shown))
-        };
-        spans.push(Span::raw(text).fg(theme::fg()));
+    if let Some(count) = app.entry_count() {
+        spans.push(Span::raw(format!(" {}", format::items(count))).fg(theme::fg()));
     }
     if let Some(entry) = app.selected_entry() {
         spans.push(Span::raw(trf(" · “{}”", &[&entry.name])).fg(theme::dim()));
@@ -1009,8 +986,6 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
     let hints = if app.tab.focus == Focus::Preview {
         PREVIEW_HINTS
-    } else if app.filter_editing {
-        FILTER_HINTS
     } else {
         HINTS
     };
@@ -1045,7 +1020,6 @@ mod tests {
         let all = help
             .iter()
             .chain(HINTS)
-            .chain(FILTER_HINTS)
             .chain(PREVIEW_HINTS)
             .chain(TERMINAL_HINTS);
         for (key, what) in all {
