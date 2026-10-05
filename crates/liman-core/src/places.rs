@@ -40,9 +40,7 @@ pub struct Places {
 impl Places {
     /// Reads `$XDG_CONFIG_HOME/user-dirs.dirs` (or `~/.config/user-dirs.dirs`). Missing file: no XDG dirs.
     pub fn detect(home: &Path) -> Self {
-        let config = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".config"));
+        let config = crate::xdg::config_home(home);
         let content = fs::read_to_string(config.join("user-dirs.dirs")).unwrap_or_default();
         Self::from_user_dirs(&content, home)
     }
@@ -137,10 +135,7 @@ fn display_name(kind: SpecialDir, path: &Path) -> String {
 
 /// Files in the freedesktop trash live in `$XDG_DATA_HOME/Trash/files`.
 fn trash_files(home: &Path) -> PathBuf {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local/share"))
-        .join("Trash/files")
+    crate::trash::home_trash(home).join("files")
 }
 
 /// Parses lines like `XDG_DOWNLOAD_DIR="$HOME/Downloads"`. Unknown keys are ignored.

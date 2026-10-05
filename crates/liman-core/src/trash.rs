@@ -22,10 +22,7 @@ pub struct TrashedItem {
 
 /// `$XDG_DATA_HOME/Trash` (default `~/.local/share/Trash`).
 pub fn home_trash(home: &Path) -> PathBuf {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local/share"))
-        .join("Trash")
+    crate::xdg::data_home(home).join("Trash")
 }
 
 /// Moves `path` (absolute) into the trash at `trash_dir`.

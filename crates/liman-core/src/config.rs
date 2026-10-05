@@ -8,10 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub fn path(home: &Path) -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"))
-        .join("liman/config")
+    crate::xdg::config_home(home).join("liman/config")
 }
 
 /// All settings; a missing or unreadable file is just empty.

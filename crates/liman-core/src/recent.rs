@@ -8,10 +8,7 @@ use std::path::{Path, PathBuf};
 pub const MAX_RECENT: usize = 200;
 
 pub fn xbel_path(home: &Path) -> PathBuf {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local/share"))
-        .join("recently-used.xbel")
+    crate::xdg::data_home(home).join("recently-used.xbel")
 }
 
 /// Existing local files from the list, newest first.

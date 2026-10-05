@@ -17,6 +17,7 @@ pub mod recent;
 pub mod results;
 pub mod sort;
 pub mod trash;
+pub mod xdg;
 
 pub use entry::Entry;
 pub use file_type::FileType;
