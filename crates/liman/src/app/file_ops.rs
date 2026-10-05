@@ -2,7 +2,7 @@
 //! The work itself happens in `liman_core::job` on a worker thread.
 
 use liman_core::i18n::{tr, trf};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use liman_core::job::{Job, Outcome};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -119,13 +119,10 @@ impl App {
             self.message = Some(tr("Nothing to paste: use Ctrl+C or Ctrl+X first").into());
             return;
         };
-        let dest = self.cwd.clone();
         let conflicts: Vec<PathBuf> = clip
             .paths
             .iter()
-            .filter(|src| src.parent() != Some(dest.as_path())) // pasting into the same folder: copies get "(2)"
-            .filter_map(|src| src.file_name().map(|n| dest.join(n)))
-            .filter(|target| target.symlink_metadata().is_ok())
+            .filter_map(|src| existing_target(src, &self.cwd))
             .collect();
         if conflicts.is_empty() {
             self.paste_with(Conflict::KeepBoth);
@@ -142,11 +139,7 @@ impl App {
             return;
         };
         let dest = self.cwd.clone();
-        let existing = |src: &PathBuf| {
-            src.file_name()
-                .map(|n| dest.join(n))
-                .filter(|t| src.parent() != Some(dest.as_path()) && t.symlink_metadata().is_ok())
-        };
+        let existing = |src: &PathBuf| existing_target(src, &dest);
         let mut sources = clip.paths.clone();
         let mut replaced = Vec::new();
         match answer {
@@ -339,6 +332,16 @@ impl App {
             self.refresh();
         }
     }
+}
+
+/// The item already in `dest` that pasting `src` there would collide with. Pasting into the
+/// folder the item comes from is no conflict: the copy gets a "(2)" name.
+fn existing_target(src: &Path, dest: &Path) -> Option<PathBuf> {
+    if src.parent() == Some(dest) {
+        return None;
+    }
+    let target = dest.join(src.file_name()?);
+    target.symlink_metadata().is_ok().then_some(target)
 }
 
 #[cfg(test)]
