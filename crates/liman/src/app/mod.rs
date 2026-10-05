@@ -10,7 +10,7 @@ mod terminal_mode;
 pub use actions::{Action, HELP, Menu};
 pub use file_ops::{ClipMode, Clipboard, Dialog, JobStatus, RenameInput};
 pub use git_ops::GitPanel;
-pub use preview::{PreviewKey, PreviewPane};
+pub use preview::{Graphic, PreviewKey, PreviewPane};
 pub use tabs::{TabLabel, TabState, Tabs};
 pub use terminal_mode::{Focus, TermMode};
 
@@ -238,7 +238,7 @@ impl App {
             commit_input: None,
             branch_picker: None,
             git_again: false,
-            preview: PreviewPane::default(),
+            preview: PreviewPane::new(),
             tabs: Tabs::default(),
             menu: None,
             menu_area: Rect::default(),
@@ -415,7 +415,11 @@ impl App {
             }
             AppEvent::GitRemote { root, remote } => self.on_git_remote(&root, remote),
             AppEvent::GitBranches(result) => self.on_git_branches(result),
-            AppEvent::Preview { key, preview } => self.on_preview(key, *preview),
+            AppEvent::Preview {
+                key,
+                preview,
+                graphic,
+            } => self.on_preview(key, *preview, graphic),
             AppEvent::TermQuiet(_) => {
                 let Some(term) = &mut self.tab.terminal else {
                     return;
@@ -1225,6 +1229,8 @@ impl App {
         {
             self.sort = order;
         }
+        // `images = halfblocks` never asks the terminal for a graphics protocol (ADR 0009).
+        self.preview.images_auto = settings.get("images").is_none_or(|v| v != "halfblocks");
         if settings.get("preview").is_some_and(|v| v == "true") {
             self.preview.shown = true;
         }

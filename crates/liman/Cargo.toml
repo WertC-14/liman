@@ -12,6 +12,8 @@ liman-core.workspace = true
 liman-widgets.workspace = true
 notify = { version = "8", default-features = false }
 portable-pty = "0.9"
+image = { version = "0.25.10", default-features = false }
+ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "underline-color"] }
 vt100 = "0.16"
 

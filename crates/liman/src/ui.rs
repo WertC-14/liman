@@ -571,12 +571,32 @@ fn render_preview(frame: &mut Frame, app: &mut App, area: Rect, title: &str, foc
             .saturating_sub(liman_widgets::preview::HEADER_ROWS),
     );
     if let Some(preview) = &app.preview.current {
+        let graphic = app.preview.graphic.as_deref().map(|g| &g.0);
         frame.render_widget(
             liman_widgets::preview::PreviewView::new(preview)
                 .scroll(app.preview.scroll)
-                .raw_markdown(app.preview.raw_markdown),
+                .raw_markdown(app.preview.raw_markdown)
+                .skip_image(graphic.is_some()),
             inner,
         );
+        // A real image (Kitty / Sixel / iTerm2) under the header, centered (ADR 0009).
+        if let Some(graphic) = graphic {
+            let header = liman_widgets::preview::HEADER_ROWS;
+            let body = Rect {
+                y: inner.y + header.min(inner.height),
+                height: inner.height.saturating_sub(header),
+                ..inner
+            };
+            let size = graphic.size();
+            let width = size.width.min(body.width);
+            let area = Rect {
+                x: body.x + (body.width - width) / 2,
+                width,
+                height: size.height.min(body.height),
+                ..body
+            };
+            frame.render_widget(ratatui_image::Image::new(graphic), area);
+        }
     }
 }
 

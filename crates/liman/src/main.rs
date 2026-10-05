@@ -26,7 +26,7 @@ Usage: liman            open the current folder
        liman --version  print the version
 
 Inside: ? shows all keys, Ctrl+P all commands.
-Config: ~/.config/liman/config (theme, lang = tr | en, colors = truecolor | 256, icons = nerd | unicode, hidden, sort, preview)";
+Config: ~/.config/liman/config (theme, lang = tr | en, colors = truecolor | 256, icons = nerd | unicode, images = auto | halfblocks, hidden, sort, preview)";
 
 /// Shortest time between two frames (~60 per second).
 const FRAME: Duration = Duration::from_millis(16);
@@ -110,6 +110,17 @@ fn main() -> io::Result<()> {
             app.handle(next);
         }
 
+        // The first image preview: ask the terminal which graphics protocol it speaks. The answer
+        // comes on stdin, so the input thread steps aside meanwhile (ADR 0009).
+        if app.preview.picker_wanted {
+            input.pause();
+            let picker = ratatui_image::picker::Picker::from_query_stdio()
+                .unwrap_or_else(|_| ratatui_image::picker::Picker::halfblocks());
+            input.resume();
+            // A terminal that does not know a query may print part of it: draw everything again.
+            tui.redraw_all()?;
+            app.set_picker(picker);
+        }
         if let Some((program, path)) = app.external.take() {
             run_external(&mut tui, &input, &program, &path, &mut app)?;
         }

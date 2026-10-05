@@ -20,6 +20,7 @@ pub struct PreviewView<'a> {
     preview: &'a Preview,
     scroll: usize,
     raw_markdown: bool,
+    skip_image: bool,
 }
 
 impl<'a> PreviewView<'a> {
@@ -28,7 +29,14 @@ impl<'a> PreviewView<'a> {
             preview,
             scroll: 0,
             raw_markdown: false,
+            skip_image: false,
         }
+    }
+
+    /// The caller draws the image itself (a terminal graphics protocol): no half blocks.
+    pub fn skip_image(mut self, skip: bool) -> Self {
+        self.skip_image = skip;
+        self
     }
 
     /// Markdown as source (highlighted, with line numbers) instead of formatted.
@@ -87,7 +95,8 @@ impl Widget for PreviewView<'_> {
                     height,
                     pixels,
                     ..
-                } => image(*width, *height, pixels, body, buf),
+                } if !self.skip_image => image(*width, *height, pixels, body, buf),
+                Content::Image { .. } => {}
                 Content::Note(note) => {
                     Paragraph::new(note.as_str())
                         .style(Style::new().fg(theme::dim()).add_modifier(Modifier::ITALIC))

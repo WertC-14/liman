@@ -205,13 +205,34 @@ pub fn spawn_tree_children(tx: Sender<AppEvent>, dir: PathBuf, show_hidden: bool
     });
 }
 
-/// Builds the preview of one path (F3 panel).
-pub fn spawn_preview(tx: Sender<AppEvent>, key: crate::app::PreviewKey) {
+/// Builds the preview of one path (F3 panel). With a graphics-capable `picker`, an image is also
+/// encoded for the terminal (Kitty / Sixel / iTerm2) at the panel size, here and not on the UI
+/// thread: the encoding is the expensive part (ADR 0009).
+pub fn spawn_preview(
+    tx: Sender<AppEvent>,
+    key: crate::app::PreviewKey,
+    picker: Option<ratatui_image::picker::Picker>,
+) {
     thread::spawn(move || {
         let preview = liman_core::preview::build(&key.0, key.1, key.2);
+        let graphic = picker
+            .filter(|_| matches!(preview.content, liman_core::preview::Content::Image { .. }))
+            .and_then(|picker| {
+                let image = image::ImageReader::open(&key.0)
+                    .ok()?
+                    .with_guessed_format()
+                    .ok()?
+                    .decode()
+                    .ok()?;
+                let size = ratatui::layout::Size::new(key.1, key.2);
+                let fit = ratatui_image::Resize::Fit(None);
+                let protocol = picker.new_protocol(image, size, fit).ok()?;
+                Some(Box::new(crate::app::Graphic(protocol)))
+            });
         let _ = tx.send(AppEvent::Preview {
             key,
             preview: Box::new(preview),
+            graphic,
         });
     });
 }

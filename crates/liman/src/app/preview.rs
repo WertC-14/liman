@@ -10,6 +10,15 @@ use ratatui::layout::Rect;
 use super::App;
 use crate::worker;
 
+/// An image encoded for the terminal's graphics protocol (ADR 0009).
+pub struct Graphic(pub ratatui_image::protocol::Protocol);
+
+impl std::fmt::Debug for Graphic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Graphic({:?})", self.0.size())
+    }
+}
+
 /// What a preview was built for: path and panel size (images only; 0 × 0 for the rest).
 pub type PreviewKey = (PathBuf, u16, u16);
 
@@ -28,6 +37,24 @@ pub struct PreviewPane {
     pub area: Rect,
     wanted: Option<PreviewKey>,
     busy: bool,
+    /// The current image for the terminal's graphics protocol (drawn instead of half blocks).
+    pub graphic: Option<Box<crate::app::Graphic>>,
+    /// `images = auto` (default): ask the terminal for a graphics protocol on the first image.
+    pub images_auto: bool,
+    /// The terminal's answer: `None` until asked (graphics only when it is not half blocks).
+    pub picker: Option<ratatui_image::picker::Picker>,
+    /// An image waits for the terminal to be asked; the main loop does it (it owns stdin).
+    pub picker_wanted: bool,
+}
+
+impl PreviewPane {
+    /// Closed, with `images = auto`.
+    pub fn new() -> Self {
+        Self {
+            images_auto: true,
+            ..Self::default()
+        }
+    }
 }
 
 impl App {
@@ -62,9 +89,13 @@ impl App {
         } else {
             (0, 0)
         };
+        let is_image = entry.file_type == liman_core::FileType::Image;
         let key = (entry.path.clone(), cols, rows);
         if self.preview.wanted.as_ref() == Some(&key) {
             return;
+        }
+        if is_image && self.preview.images_auto && self.preview.picker.is_none() {
+            self.preview.picker_wanted = true;
         }
         if self.preview.wanted.as_ref().is_none_or(|w| w.0 != key.0) {
             self.preview.scroll = 0;
@@ -72,21 +103,45 @@ impl App {
         self.preview.wanted = Some(key.clone());
         if !self.preview.busy {
             self.preview.busy = true;
-            worker::spawn_preview(self.tx.clone(), key);
+            worker::spawn_preview(self.tx.clone(), key, self.graphics_picker());
         }
     }
 
-    pub(super) fn on_preview(&mut self, key: PreviewKey, preview: Preview) {
+    /// The picker when the terminal has a real graphics protocol.
+    fn graphics_picker(&self) -> Option<ratatui_image::picker::Picker> {
+        use ratatui_image::picker::ProtocolType;
+        self.preview
+            .picker
+            .clone()
+            .filter(|p| p.protocol_type() != ProtocolType::Halfblocks)
+    }
+
+    /// The terminal answered which graphics protocol it has: build the preview again with it.
+    pub fn set_picker(&mut self, picker: ratatui_image::picker::Picker) {
+        self.preview.picker = Some(picker);
+        self.preview.picker_wanted = false;
+        self.invalidate_preview();
+        self.dirty = true;
+    }
+
+    pub(super) fn on_preview(
+        &mut self,
+        key: PreviewKey,
+        preview: Preview,
+        graphic: Option<Box<crate::app::Graphic>>,
+    ) {
         self.preview.busy = false;
         match &self.preview.wanted {
             Some(wanted) if *wanted == key => {
                 self.preview.current = Some(preview);
+                self.preview.graphic = graphic;
                 self.dirty = true;
             }
             // The selection moved on while this one was built: build the newest one now.
             Some(wanted) => {
                 self.preview.busy = true;
-                worker::spawn_preview(self.tx.clone(), wanted.clone());
+                let wanted = wanted.clone();
+                worker::spawn_preview(self.tx.clone(), wanted, self.graphics_picker());
             }
             None => {}
         }

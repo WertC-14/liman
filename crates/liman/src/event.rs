@@ -51,6 +51,8 @@ pub enum AppEvent {
     Preview {
         key: crate::app::PreviewKey,
         preview: Box<liman_core::preview::Preview>,
+        /// The image encoded for the terminal's graphics protocol (ADR 0009), if it has one.
+        graphic: Option<Box<crate::app::Graphic>>,
     },
     /// `git status` finished for the repository around `dir`.
     Git {

@@ -43,6 +43,14 @@ impl Tui {
         result
     }
 
+    /// Clears the screen and forgets the last frame, so the next one is drawn in full (after
+    /// something wrote to the terminal behind ratatui's back, e.g. a capability query).
+    pub fn redraw_all(&mut self) -> io::Result<()> {
+        execute!(stdout(), Clear(ClearType::All))?;
+        self.terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+        Ok(())
+    }
+
     /// Gives the terminal back (normal screen, cooked mode) so another program can use it.
     pub fn suspend(&mut self) -> io::Result<()> {
         execute!(stdout(), DisableMouseCapture)?;
