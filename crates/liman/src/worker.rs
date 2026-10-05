@@ -47,17 +47,24 @@ pub fn spawn_counts(
             if last.elapsed() >= COUNT_BATCH {
                 last = Instant::now();
                 let counts = std::mem::take(&mut batch);
-                if tx.send(AppEvent::Counts { generation, counts }).is_err() {
+                let done = false;
+                if tx
+                    .send(AppEvent::Counts {
+                        generation,
+                        counts,
+                        done,
+                    })
+                    .is_err()
+                {
                     return;
                 }
             }
         }
-        if !batch.is_empty() {
-            let _ = tx.send(AppEvent::Counts {
-                generation,
-                counts: batch,
-            });
-        }
+        let _ = tx.send(AppEvent::Counts {
+            generation,
+            counts: batch,
+            done: true,
+        });
     });
 }
 

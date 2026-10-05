@@ -38,6 +38,8 @@ use crate::worker;
 
 /// Two clicks on the same row within this time count as a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+/// While folder counts arrive, a size sort is redone at most this often.
+const COUNT_SORT_INTERVAL: Duration = Duration::from_secs(1);
 /// Rows moved per mouse wheel step.
 const WHEEL_STEP: isize = 3;
 
@@ -217,6 +219,8 @@ pub struct App {
     cwd_checked: Instant,
     /// Folder of the listing on its way, if any.
     loading_path: Option<PathBuf>,
+    /// When a size sort last took the arriving folder counts into account.
+    counts_sorted: Instant,
     /// When the newest listing was requested (it shows every change made before).
     listing_started: Instant,
     /// The listing on its way was started by following the shell (do not send `cd` back).
@@ -291,6 +295,7 @@ impl App {
             cwd_checked: Instant::now(),
             loading_path: None,
             listing_started: Instant::now(),
+            counts_sorted: Instant::now(),
             load_from_shell: false,
             list_area: Rect::default(),
             sidebar_area: Rect::default(),
@@ -428,7 +433,11 @@ impl App {
                     self.request_git();
                 }
             }
-            AppEvent::Counts { generation, counts } => self.on_counts(generation, counts),
+            AppEvent::Counts {
+                generation,
+                counts,
+                done,
+            } => self.on_counts(generation, counts, done),
             AppEvent::GitDone { label, result } => self.on_git_done(label, result),
             AppEvent::GitDiff { path, lines } => self.on_git_diff(path, lines),
             AppEvent::GitRemote { root, remote } => self.on_git_remote(&root, remote),
@@ -1507,6 +1516,7 @@ impl App {
         &mut self,
         generation: u64,
         counts: Vec<(PathBuf, Option<usize>, Option<liman_core::FileType>)>,
+        done: bool,
     ) {
         if generation != self.generation {
             return;
@@ -1522,7 +1532,11 @@ impl App {
                 entry.contents = *contents;
             }
         }
-        if self.sort.key == liman_core::sort::SortKey::Size && self.results.is_none() {
+        // A size sort uses the counts. Sorting again moves the selection around, so it happens
+        // once at the end, and at most once a second while a long count is still running.
+        let due = done || self.counts_sorted.elapsed() >= COUNT_SORT_INTERVAL;
+        if self.sort.key == liman_core::sort::SortKey::Size && self.results.is_none() && due {
+            self.counts_sorted = Instant::now();
             self.set_sort_quietly(self.sort);
         }
         self.dirty = true;
@@ -1599,6 +1613,7 @@ impl App {
             Err(err) => Listing::Failed(err),
         };
         if !to_count.is_empty() {
+            self.counts_sorted = Instant::now();
             worker::spawn_counts(
                 self.tx.clone(),
                 self.generation,

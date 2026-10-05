@@ -27,6 +27,8 @@ pub enum AppEvent {
         generation: u64,
         /// Folder, its child count and the type most of its files have.
         counts: Vec<(PathBuf, Option<usize>, Option<liman_core::FileType>)>,
+        /// The last batch of this listing.
+        done: bool,
     },
     /// The running job got further (bytes for copy/move, items for the rest) out of `total`.
     JobProgress {
