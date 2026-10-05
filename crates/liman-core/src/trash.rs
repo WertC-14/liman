@@ -6,6 +6,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
@@ -32,25 +33,27 @@ pub fn trash(path: &Path, trash_dir: &Path) -> io::Result<TrashedItem> {
     fs::create_dir_all(&files)?;
     fs::create_dir_all(&info_dir)?;
 
+    // Kept as bytes: a name that is not valid UTF-8 is trashed (and restored) under itself.
     let name = path
         .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "cannot trash this path"))?
-        .to_string_lossy()
-        .into_owned();
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "cannot trash this path"))?;
 
     // The spec reserves a name by creating the .trashinfo file atomically (create_new).
     let (stored, info, mut info_file) = (1..)
         .map(|n| {
-            if n == 1 {
-                name.clone()
-            } else {
-                format!("{name}.{n}")
+            let mut candidate = name.to_os_string();
+            if n > 1 {
+                candidate.push(format!(".{n}"));
             }
+            candidate
         })
         .find_map(|candidate| {
-            let info = info_dir.join(format!("{candidate}.trashinfo"));
+            let mut info_name = candidate.clone();
+            info_name.push(".trashinfo");
+            let info = info_dir.join(info_name);
+            let taken = files.join(&candidate).symlink_metadata().is_ok();
             match OpenOptions::new().write(true).create_new(true).open(&info) {
-                Ok(file) if !files.join(&candidate).exists() => Some(Ok((candidate, info, file))),
+                Ok(file) if !taken => Some(Ok((candidate, info, file))),
                 Ok(_) => {
                     let _ = fs::remove_file(&info);
                     None
@@ -64,7 +67,7 @@ pub fn trash(path: &Path, trash_dir: &Path) -> io::Result<TrashedItem> {
     write!(
         info_file,
         "[Trash Info]\nPath={}\nDeletionDate={}\n",
-        percent_encode(&path.to_string_lossy()),
+        percent_encode(path.as_os_str().as_bytes()),
         Local::now().format("%Y-%m-%dT%H:%M:%S")
     )?;
 
@@ -94,13 +97,14 @@ pub fn restore(item: &TrashedItem) -> io::Result<()> {
 }
 
 /// Percent-encodes everything except unreserved characters and `/` (RFC 3986, as the spec asks).
-fn percent_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
+fn percent_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len());
+    for &b in bytes {
         if b.is_ascii_alphanumeric() || b"-._~/".contains(&b) {
             out.push(char::from(b));
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out
@@ -113,8 +117,11 @@ mod tests {
 
     #[test]
     fn percent_encoding() {
-        assert_eq!(percent_encode("/home/u/a b.txt"), "/home/u/a%20b.txt");
-        assert_eq!(percent_encode("/İzle"), "/%C4%B0zle");
+        assert_eq!(
+            percent_encode("/home/u/a b.txt".as_bytes()),
+            "/home/u/a%20b.txt"
+        );
+        assert_eq!(percent_encode("/İzle".as_bytes()), "/%C4%B0zle");
     }
 
     #[test]

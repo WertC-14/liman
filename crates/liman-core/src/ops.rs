@@ -1,8 +1,10 @@
 //! File operations: rename, copy, move. Blocking: run them on a worker thread.
 //! Every function returns the final path, which the undo stack needs.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 /// Checks a user-typed file name.
@@ -36,18 +38,26 @@ pub fn rename(path: &Path, new_name: &str) -> io::Result<PathBuf> {
 }
 
 /// A name in `dir` based on `name` that does not exist yet: `a.txt`, `a (2).txt`, `a (3).txt`, ...
-pub fn free_name(dir: &Path, name: &str) -> PathBuf {
+/// Works on the name's bytes, so names that are not valid UTF-8 stay as they are.
+pub fn free_name(dir: &Path, name: impl AsRef<OsStr>) -> PathBuf {
+    let name = name.as_ref();
     let first = dir.join(name);
     if first.symlink_metadata().is_err() {
         return first;
     }
     // Keep the extension at the end; dotfiles like `.bashrc` have no extension.
-    let (stem, ext) = match name.rfind('.') {
-        Some(i) if i > 0 => (&name[..i], &name[i..]),
-        _ => (name, ""),
+    let bytes = name.as_bytes();
+    let (stem, ext) = match bytes.iter().rposition(|&b| b == b'.') {
+        Some(i) if i > 0 => bytes.split_at(i),
+        _ => (bytes, &[][..]),
     };
     (2..)
-        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .map(|n| {
+            let mut candidate = stem.to_vec();
+            candidate.extend_from_slice(format!(" ({n})").as_bytes());
+            candidate.extend_from_slice(ext);
+            dir.join(OsStr::from_bytes(&candidate))
+        })
         .find(|p| p.symlink_metadata().is_err())
         .expect("unbounded search")
 }
@@ -85,7 +95,7 @@ pub fn copy_into(
             crate::i18n::tr("cannot copy a folder into itself"),
         ));
     }
-    let target = free_name(dest_dir, &name);
+    let target = free_name(dest_dir, name);
     let mut done = 0;
     copy_recursive(src, &target, &mut done, progress)?;
     Ok(target)
@@ -107,7 +117,7 @@ pub fn move_into(
     if src.parent() == Some(dest_dir) {
         return Ok(src.to_path_buf()); // already there
     }
-    let target = free_name(dest_dir, &name);
+    let target = free_name(dest_dir, name);
     match fs::rename(src, &target) {
         Ok(()) => Ok(target),
         Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
@@ -146,9 +156,8 @@ pub fn remove_all(path: &Path) -> io::Result<()> {
     }
 }
 
-fn file_name(path: &Path) -> io::Result<String> {
+fn file_name(path: &Path) -> io::Result<&OsStr> {
     path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))
 }
 
@@ -199,6 +208,29 @@ mod tests {
         assert_eq!(free_name(&dir, "a.txt"), dir.join("a (3).txt"));
         fs::write(dir.join(".bashrc"), "").unwrap();
         assert_eq!(free_name(&dir, ".bashrc"), dir.join(".bashrc (2)"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn names_that_are_not_utf8_survive_copy_and_trash() {
+        use std::ffi::OsStr;
+        let dir = test_dir("bytes");
+        let name = OsStr::from_bytes(b"caf\xe9.txt"); // Latin-1, not valid UTF-8
+        let src = dir.join(name);
+        fs::write(&src, "x").unwrap();
+        let dest = dir.join("dest");
+        fs::create_dir(&dest).unwrap();
+        assert_eq!(
+            copy_into(&src, &dest, &mut |_| {}).unwrap(),
+            dest.join(name)
+        );
+        // A second copy keeps the bytes too: "caf\xe9 (2).txt".
+        let second = copy_into(&src, &dest, &mut |_| {}).unwrap();
+        assert_eq!(second.file_name().unwrap().as_bytes(), b"caf\xe9 (2).txt");
+        let item = crate::trash::trash(&src, &dir.join("Trash")).unwrap();
+        assert_eq!(item.trashed.file_name(), Some(name));
+        crate::trash::restore(&item).unwrap();
+        assert!(src.exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
