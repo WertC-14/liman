@@ -3,7 +3,8 @@
 
 use std::path::PathBuf;
 
-use liman_core::preview::Preview;
+use liman_core::preview::{Content, Preview};
+use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 
 use super::App;
@@ -15,6 +16,8 @@ pub type PreviewKey = (PathBuf, u16, u16);
 #[derive(Default)]
 pub struct PreviewPane {
     pub shown: bool,
+    /// Full-screen reader (Enter in the preview, `r` on a file).
+    pub reader: bool,
     /// The last finished preview; kept on screen until the next one arrives (no flicker).
     pub current: Option<Preview>,
     /// First line shown (mouse wheel over the panel).
@@ -29,6 +32,10 @@ impl App {
     /// F3.
     pub(super) fn toggle_preview(&mut self) {
         self.preview.shown = !self.preview.shown;
+        self.preview.reader = false;
+        if !self.preview.shown && self.focus == super::Focus::Preview {
+            self.focus = super::Focus::Files;
+        }
         let value = if self.preview.shown { "true" } else { "false" };
         self.save_setting("preview", value);
         if !self.preview.shown {
@@ -82,7 +89,49 @@ impl App {
     }
 
     pub(super) fn scroll_preview(&mut self, delta: isize) {
-        self.preview.scroll = self.preview.scroll.saturating_add_signed(delta);
+        let max = match self.preview.current.as_ref().map(|p| &p.content) {
+            Some(Content::Text { lines, .. }) => lines.len().saturating_sub(1),
+            Some(Content::Folder { names, .. }) => names.len().saturating_sub(1),
+            _ => 0,
+        };
+        self.preview.scroll = self.preview.scroll.saturating_add_signed(delta).min(max);
+    }
+
+    /// `r` on a file: read it full screen.
+    pub(super) fn open_reader(&mut self) {
+        if self.selected_entry().is_some() {
+            self.preview.reader = true;
+            self.focus = super::Focus::Preview;
+        }
+    }
+
+    /// Keys while the preview (panel or reader) has the focus.
+    pub(super) fn on_preview_key(&mut self, key: KeyEvent) {
+        let page = self.preview.area.height.saturating_sub(4).max(1) as isize;
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_preview(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_preview(1),
+            KeyCode::PageUp | KeyCode::Char('b') => self.scroll_preview(-page),
+            KeyCode::PageDown | KeyCode::Char(' ') => self.scroll_preview(page),
+            KeyCode::Home | KeyCode::Char('g') => self.preview.scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => self.scroll_preview(isize::MAX / 2),
+            KeyCode::Enter | KeyCode::Char('f') if self.preview.shown => {
+                self.preview.reader = !self.preview.reader;
+            }
+            KeyCode::Enter | KeyCode::Char('f') if !self.preview.reader => {
+                self.preview.reader = true
+            }
+            KeyCode::Enter | KeyCode::Char('f') | KeyCode::Esc | KeyCode::Char('q')
+                if self.preview.reader =>
+            {
+                self.preview.reader = false;
+                if !self.preview.shown {
+                    self.focus = super::Focus::Files;
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') => self.focus = super::Focus::Files,
+            _ => {}
+        }
     }
 }
 
@@ -128,5 +177,45 @@ mod tests {
             }
         }
         fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod reader_tests {
+    use crate::app::{App, Focus, Listing};
+    use crate::event::AppEvent;
+    use liman_core::Places;
+    use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn r_opens_the_reader_and_esc_returns_to_the_files() {
+        let dir = std::env::temp_dir().join(format!("liman-reader-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let text: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(dir.join("a.txt"), text).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let mut app = App::new(dir.clone(), Places::from_user_dirs("", &dir), tx);
+        while !matches!(app.listing, Listing::Ready(_)) {
+            app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        }
+        let key = |code| AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+        app.handle(key(KeyCode::Char('r')));
+        assert!(app.preview.reader);
+        assert_eq!(app.focus, Focus::Preview);
+        app.want_preview(80, 20);
+        while app.preview.current.is_none() {
+            app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        }
+        app.handle(key(KeyCode::End));
+        assert_eq!(app.preview.scroll, 99);
+        app.handle(key(KeyCode::Char('j')));
+        assert_eq!(app.preview.scroll, 99, "stops at the last line");
+        app.handle(key(KeyCode::Esc));
+        assert!(!app.preview.reader);
+        assert_eq!(app.focus, Focus::Files);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

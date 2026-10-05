@@ -394,6 +394,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("Ctrl+T / Ctrl+W", "new tab / close tab"),
     ("Alt+1…9 / Ctrl+PgUp/PgDn", "go to tab"),
     ("F3", "preview panel"),
+    ("r", "read the file full screen"),
     ("F4 / Ctrl+O", "terminal panel / full screen"),
     ("Alt+Enter", "selected paths into the terminal"),
     ("Ctrl+↑ / Ctrl+↓", "terminal size"),
@@ -476,6 +477,16 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
         body
     };
 
+    // `r` / Enter in the preview: the file fills the space of the sidebar and the list.
+    if app.preview.reader {
+        app.sidebar_area = Rect::default();
+        app.list_area = Rect::default();
+        let title = tr(" Reader · ↑↓ PgUp/PgDn scroll · Enter back to the panel · Esc close ");
+        render_preview(frame, app, body, title, true);
+        render_status_bar(frame, app, status);
+        return;
+    }
+
     let main = if body.width >= SIDEBAR_MIN_WIDTH {
         let [side, main] =
             Layout::horizontal([Constraint::Length(sidebar::WIDTH + 2), Constraint::Fill(1)])
@@ -515,14 +526,17 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
     let main = inner;
     render_list(frame, app, main.inner(Margin::new(2, 1)));
     match preview_area {
-        Some(area) => render_preview(frame, app, area),
+        Some(area) => {
+            let focused = app.focus == Focus::Preview;
+            render_preview(frame, app, area, tr(" Preview "), focused)
+        }
         None => app.preview.area = Rect::default(),
     }
     render_status_bar(frame, app, status);
 }
 
-fn render_preview(frame: &mut Frame, app: &mut App, area: Rect) {
-    let block = panel(tr(" Preview "), false);
+fn render_preview(frame: &mut Frame, app: &mut App, area: Rect, title: &str, focused: bool) {
+    let block = panel(title, focused);
     let inner = block.inner(area).inner(Margin::new(1, 1));
     frame.render_widget(block, area);
     app.preview.area = inner;
@@ -789,6 +803,12 @@ const HINTS: &[(&str, &str)] = &[
     ("q", "quit"),
 ];
 const FILTER_HINTS: &[(&str, &str)] = &[("Enter", "keep filter"), ("Esc", "clear")];
+const PREVIEW_HINTS: &[(&str, &str)] = &[
+    ("↑↓ PgUp/PgDn", "scroll"),
+    ("g/G", "start / end"),
+    ("Enter", "full screen"),
+    ("Esc", "files"),
+];
 const TERMINAL_HINTS: &[(&str, &str)] = &[
     ("Ctrl+O", "files / full screen"),
     ("F6", "focus"),
@@ -905,7 +925,9 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(message) = &app.message {
         spans.push(Span::raw(format!("{message}  ")).fg(theme::fg()));
     }
-    let hints = if app.filter_editing {
+    let hints = if app.focus == Focus::Preview {
+        PREVIEW_HINTS
+    } else if app.filter_editing {
         FILTER_HINTS
     } else {
         HINTS
@@ -931,6 +953,7 @@ mod tests {
             .iter()
             .chain(HINTS)
             .chain(FILTER_HINTS)
+            .chain(PREVIEW_HINTS)
             .chain(TERMINAL_HINTS);
         for (key, what) in all {
             assert!(turkish(what).is_some(), "no Turkish for {what:?}");

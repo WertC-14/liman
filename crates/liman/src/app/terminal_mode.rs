@@ -22,11 +22,13 @@ pub enum TermMode {
     Fullscreen,
 }
 
-/// Which panel gets the keys. Tab / Shift+Tab cycle Places → Files → Terminal.
+/// Which panel gets the keys. Tab / Shift+Tab cycle Places → Files → Preview → Terminal
+/// (the preview and the terminal only when they are open).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Places,
     Files,
+    Preview,
     Terminal,
 }
 
@@ -70,23 +72,28 @@ impl App {
 
     /// Tab: Places → Files → Terminal (opening the panel) → Places.
     pub(super) fn focus_next(&mut self) {
-        match self.focus {
-            Focus::Places => self.focus = Focus::Files,
-            // A closed terminal is skipped, never opened by Tab (F4 opens it).
-            Focus::Files if self.term_mode == TermMode::Hidden => {
-                self.focus = self.places_or_files()
-            }
-            Focus::Files => self.focus = Focus::Terminal,
-            Focus::Terminal => self.focus = self.places_or_files(),
-        }
+        self.preview.reader = false;
+        // Closed panels are skipped, never opened by Tab (F3 / F4 open them).
+        let terminal = self.term_mode == TermMode::Panel;
+        let preview = self.preview.shown;
+        self.focus = match self.focus {
+            Focus::Places => Focus::Files,
+            Focus::Files if preview => Focus::Preview,
+            Focus::Files | Focus::Preview if terminal => Focus::Terminal,
+            Focus::Files | Focus::Preview | Focus::Terminal => self.places_or_files(),
+        };
     }
 
-    /// Shift+Tab: the other way round (the terminal is skipped when it is closed).
+    /// Shift+Tab: the other way round.
     pub(super) fn focus_prev(&mut self) {
+        self.preview.reader = false;
+        let terminal = self.term_mode == TermMode::Panel;
+        let preview = self.preview.shown;
         self.focus = match self.focus {
             Focus::Files => self.places_or_files(),
-            Focus::Places if self.term_mode == TermMode::Panel => Focus::Terminal,
-            Focus::Places | Focus::Terminal => Focus::Files,
+            Focus::Places if terminal => Focus::Terminal,
+            Focus::Places | Focus::Terminal if preview => Focus::Preview,
+            Focus::Places | Focus::Terminal | Focus::Preview => Focus::Files,
         };
     }
 
@@ -133,7 +140,7 @@ impl App {
     pub(super) fn switch_focus(&mut self) {
         if self.term_mode == TermMode::Panel {
             self.focus = match self.focus {
-                Focus::Files | Focus::Places => Focus::Terminal,
+                Focus::Files | Focus::Places | Focus::Preview => Focus::Terminal,
                 Focus::Terminal => Focus::Files,
             };
         }

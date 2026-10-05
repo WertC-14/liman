@@ -41,6 +41,7 @@ pub enum Action {
     CloseTab,
     NextTab,
     Preview,
+    Read,
     TerminalPanel,
     TerminalFullScreen,
     Theme,
@@ -57,7 +58,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 44] = [
+    pub const ALL: [Action; 45] = [
         Self::GitPanel,
         Self::GitStage,
         Self::GitUnstage,
@@ -97,6 +98,7 @@ impl Action {
         Self::CloseTab,
         Self::NextTab,
         Self::Preview,
+        Self::Read,
         Self::TerminalPanel,
         Self::TerminalFullScreen,
         Self::Theme,
@@ -170,6 +172,7 @@ impl Action {
             Self::CloseTab => "Close tab",
             Self::NextTab => "Next tab",
             Self::Preview => "Preview panel",
+            Self::Read => "Read file",
             Self::TerminalPanel => "Terminal panel",
             Self::TerminalFullScreen => "Terminal full screen",
             Self::Theme => "Theme…",
@@ -219,6 +222,7 @@ impl Action {
             Self::CloseTab => "Ctrl+W",
             Self::NextTab => "Ctrl+PgDn",
             Self::Preview => "F3",
+            Self::Read => "r",
             Self::TerminalPanel => "F4",
             Self::TerminalFullScreen => "Ctrl+O",
             Self::Theme => "t",
@@ -301,6 +305,7 @@ impl App {
             Action::CloseTab => self.close_tab(),
             Action::NextTab => self.cycle_tab(1),
             Action::Preview => self.toggle_preview(),
+            Action::Read => self.open_reader(),
             Action::TerminalPanel => self.toggle_panel(),
             Action::TerminalFullScreen => self.toggle_fullscreen(),
             Action::Theme => self.open_theme_picker(),

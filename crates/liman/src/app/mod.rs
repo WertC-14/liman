@@ -505,6 +505,9 @@ impl App {
         if self.menu.is_some() {
             return self.on_menu_key(key);
         }
+        if self.focus == Focus::Preview {
+            return self.on_preview_key(key);
+        }
         if self.commit_input.is_some() {
             return self.on_commit_key(key);
         }
@@ -538,6 +541,7 @@ impl App {
             // Folder navigation that works in every view (GUI file manager keys).
             // Like Nautilus / a browser: Alt+← back, Alt+→ forward, Alt+↑ parent, Alt+↓ open.
             KeyCode::Char('t') if ctrl => self.new_tab(),
+            KeyCode::Char('r') if !ctrl && !alt => self.open_reader(),
             KeyCode::Char('w') if ctrl => self.close_tab(),
             KeyCode::Char(c @ '1'..='9') if alt => self.switch_tab(c as usize - '1' as usize),
             KeyCode::Left if alt => self.go_back(),

@@ -15,9 +15,9 @@ use crate::i18n::{tr, trf};
 use crate::sort::natural_cmp;
 
 /// At most this many lines of text, folder names or archive members are kept.
-pub const MAX_LINES: usize = 500;
+pub const MAX_LINES: usize = 20_000;
 /// Only the start of a text file is read.
-const TEXT_BYTES: usize = 64 * 1024;
+const TEXT_BYTES: usize = 1024 * 1024;
 /// A folder summary stops counting here (a huge folder must not stall the preview).
 const FOLDER_LIMIT: usize = 10_000;
 

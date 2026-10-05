@@ -180,6 +180,15 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "Recent files" => "Son kullanılan dosyalar",
         "Preview panel" => "Önizleme paneli",
         "New tab" => "Yeni sekme",
+        " Reader · ↑↓ PgUp/PgDn scroll · Enter back to the panel · Esc close " => {
+            " Okuyucu · ↑↓ PgUp/PgDn kaydır · Enter panele dön · Esc kapat "
+        }
+        "scroll" => "kaydır",
+        "start / end" => "baş / son",
+        "full screen" => "tam ekran",
+        "files" => "dosyalar",
+        "read the file full screen" => "dosyayı tam ekran oku",
+        "Read file" => "Dosyayı oku",
         "Close tab" => "Sekmeyi kapat",
         "Next tab" => "Sonraki sekme",
         "This is the last tab (q quits)" => "Bu son sekme (q çıkar)",
