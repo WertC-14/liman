@@ -355,6 +355,7 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "Enter / double click" => "Enter / çift tık",
         "parent folder" => "üst klasör",
         "back / forward" => "geri / ileri",
+        "into the folder / open" => "klasöre gir / aç",
         "Places · Files · Terminal" => "Yerler · Dosyalar · Terminal",
         "small list ↔ large view" => "küçük liste ↔ büyük görünüm",
         "+ / -  (Ctrl+wheel)" => "+ / -  (Ctrl+tekerlek)",

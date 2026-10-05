@@ -119,6 +119,13 @@ impl StatefulWidget for GridView<'_> {
                 *offset = row + 1 - visible_rows;
             }
         }
+        // Never leave empty rows below the last tile when there is enough to fill them (the
+        // offset may also come from the list view, where it counts lines, not tile rows).
+        let total_rows = self.entries.len().div_ceil(cols.max(1));
+        let max_offset = total_rows.saturating_sub(visible_rows);
+        if state.offset() > max_offset {
+            *state.offset_mut() = max_offset;
+        }
         let first = state.offset() * cols;
         let last = (first + visible_rows * cols).min(self.entries.len());
         for (i, entry) in (first..last).filter_map(|i| Some((i, self.entries.get(i)?))) {
@@ -263,6 +270,17 @@ mod tests {
         let mut state = TableState::default().with_selected(Some(9)); // row 4
         GridView::new(Rows::all(&owned), 0).render(area, &mut buf, &mut state);
         assert_eq!(state.offset(), 3);
+    }
+
+    #[test]
+    fn a_large_offset_is_pulled_back_so_no_rows_stay_empty() {
+        let owned: Vec<Entry> = (0..6).map(|i| entry(&format!("f{i}.txt"), false)).collect();
+        let area = Rect::new(0, 0, 32, 21); // 2 columns, 3 visible rows: everything fits
+        let mut buf = Buffer::empty(area);
+        let mut state = TableState::default().with_selected(Some(5));
+        *state.offset_mut() = 14; // left over from the list view
+        GridView::new(Rows::all(&owned), 0).render(area, &mut buf, &mut state);
+        assert_eq!(state.offset(), 0);
     }
 
     #[test]

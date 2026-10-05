@@ -108,7 +108,7 @@ pub struct App {
     pub table: TableState,
     /// Case-insensitive substring filter typed after `/`.
     pub filter: String,
-    /// Folders visited before / after the current one (Alt+← / Alt+→).
+    /// Folders visited before / after the current one (Ctrl+← / Ctrl+→).
     back_stack: Vec<PathBuf>,
     forward_stack: Vec<PathBuf>,
     /// The listing on its way comes from back/forward (do not touch the stacks).
@@ -538,15 +538,21 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
-            // Folder navigation that works in every view (GUI file manager keys).
-            // Like Nautilus / a browser: Alt+← back, Alt+→ forward, Alt+↑ parent, Alt+↓ open.
+            // Folder navigation that works in every view. Alt+arrows move in space: ← / ↑ parent,
+            // → enters the selected folder, ↓ opens the selection. History is Ctrl+← / Ctrl+→
+            // (fm-research LOG 2026-10-05: back/forward on Alt+← sent you back *into* a folder).
             KeyCode::Char('t') if ctrl => self.new_tab(),
             KeyCode::Char('r') if !ctrl && !alt => self.open_reader(),
             KeyCode::Char('w') if ctrl => self.close_tab(),
             KeyCode::Char(c @ '1'..='9') if alt => self.switch_tab(c as usize - '1' as usize),
-            KeyCode::Left if alt => self.go_back(),
-            KeyCode::Right if alt => self.go_forward(),
-            KeyCode::Up if alt => self.go_up(),
+            KeyCode::Left | KeyCode::Up if alt => self.go_up(),
+            KeyCode::Right if alt => {
+                if self.selected_entry().is_some_and(|e| e.is_dir) {
+                    self.activate_selected();
+                }
+            }
+            KeyCode::Left if ctrl => self.go_back(),
+            KeyCode::Right if ctrl => self.go_forward(),
             KeyCode::Down if alt => self.activate_selected(),
             // GUI shortcuts: Ctrl+C copies, so quitting is q or Ctrl+Q.
             KeyCode::Char('q') => self.running = false,
@@ -1880,12 +1886,27 @@ mod tests {
     }
 
     #[test]
-    fn alt_left_right_walk_the_history_and_restore_the_selection() {
+    fn alt_left_right_are_up_and_into_never_back_into_a_folder() {
+        let (mut app, _rx) = app(); // in /data, Music selected
+        let alt = |code| AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::ALT)));
+        app.handle(key(KeyCode::Char('j'))); // Projects
+        app.handle(alt(KeyCode::Right)); // into Projects
+        arrive(&mut app, "/data/Projects", &["liman"]);
+        app.handle(alt(KeyCode::Left)); // up to /data, Projects selected
+        arrive(&mut app, "/data", &["Music", "Projects"]);
+        assert_eq!(selected_name(&app), "Projects");
+        app.handle(alt(KeyCode::Left)); // up again: /, not back into Projects
+        arrive(&mut app, "/", &["data"]);
+        assert_eq!(app.cwd, PathBuf::from("/"));
+    }
+
+    #[test]
+    fn ctrl_left_right_walk_the_history_and_restore_the_selection() {
         let (mut app, _rx) = app(); // in /data, Music selected
         app.handle(key(KeyCode::Char('j'))); // Projects
         app.handle(key(KeyCode::Enter));
         arrive(&mut app, "/data/Projects", &["liman"]);
-        let alt = |code| AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::ALT)));
+        let alt = |code| AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::CONTROL)));
         app.handle(alt(KeyCode::Left)); // back
         arrive(&mut app, "/data", &["Music", "Projects"]);
         assert_eq!(app.cwd, PathBuf::from("/data"));

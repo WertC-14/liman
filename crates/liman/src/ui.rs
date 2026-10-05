@@ -375,8 +375,9 @@ fn render_menu(frame: &mut Frame, app: &mut App) {
 /// The `?` window: keys and what they do (English; shown through `tr`).
 const HELP_KEYS: &[(&str, &str)] = &[
     ("Enter / double click", "open"),
-    ("Bksp / Alt+↑", "parent folder"),
-    ("Alt+← / Alt+→", "back / forward"),
+    ("Bksp / Alt+← / Alt+↑", "parent folder"),
+    ("Alt+→ / Alt+↓", "into the folder / open"),
+    ("Ctrl+← / Ctrl+→", "back / forward"),
     ("Tab / Shift+Tab", "Places · Files · Terminal"),
     ("v", "small list ↔ large view"),
     ("+ / -  (Ctrl+wheel)", "zoom"),
