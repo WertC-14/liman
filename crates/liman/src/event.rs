@@ -62,6 +62,11 @@ pub enum AppEvent {
         label: String,
         result: Result<String, String>,
     },
+    /// The subfolders of `dir`, for the folder tree in Places.
+    TreeChildren {
+        dir: PathBuf,
+        children: Vec<PathBuf>,
+    },
     /// The git panel's diff of `path` is ready.
     GitDiff {
         path: PathBuf,

@@ -341,6 +341,8 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         // status bar hints and the help window (keys, then what they do)
         "theme" => "tema",
         "keep" => "vazgeç",
+        "QUICK ACCESS" => "HIZLI ERİŞİM",
+        "FOLDERS" => "KLASÖRLER",
         "Permissions" => "İzinler",
         "Markdown" => "Markdown",
         "Help" => "Yardım",

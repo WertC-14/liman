@@ -493,7 +493,9 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
         let places = block.inner(side).inner(Margin::new(0, 1));
         frame.render_widget(block, side);
         app.sidebar_area = places;
-        let mut sidebar = Sidebar::new(&app.sidebar, &app.tab.cwd);
+        app.sidebar_offset = sidebar_offset(app, places.height);
+        let mut sidebar =
+            Sidebar::new(&app.sidebar, app.tree.rows(), &app.tab.cwd).offset(app.sidebar_offset);
         if places_focused {
             sidebar = sidebar.focused(app.sidebar_selected);
         }
@@ -530,6 +532,31 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
         None => app.preview.area = Rect::default(),
     }
     render_status_bar(frame, app, status);
+}
+
+/// Scrolls Places so the keyboard cursor (with focus) or the open folder stays on screen.
+fn sidebar_offset(app: &App, height: u16) -> usize {
+    let height = usize::from(height).max(1);
+    let places = app.sidebar.len();
+    let wanted = if app.tab.focus == Focus::Places {
+        Some(app.sidebar_selected)
+    } else {
+        app.tree
+            .rows()
+            .iter()
+            .position(|r| r.path == app.tab.cwd)
+            .map(|d| Sidebar::dir_row(places, d))
+    };
+    let mut offset = app.sidebar_offset;
+    if let Some(row) = wanted {
+        if row < offset {
+            offset = row;
+        } else if row >= offset + height {
+            offset = row + 1 - height;
+        }
+    }
+    let len = Sidebar::len(places, app.tree.rows().len());
+    offset.min(len.saturating_sub(height))
 }
 
 fn render_preview(frame: &mut Frame, app: &mut App, area: Rect, title: &str, focused: bool) {
@@ -1026,7 +1053,8 @@ mod tests {
         assert!(rows[1].contains(" ⌂ Home  ›  Projects ")); // path chips
         assert!(rows.iter().any(|r| r.contains("Loading")));
         assert!(rows[3].contains("Places") && rows[3].contains("Projects")); // panel titles
-        assert!(rows[5].contains("⌂ Home")); // sidebar
+        assert!(rows[5].contains("QUICK ACCESS")); // sidebar
+        assert!(rows[6].contains("⌂ Home"));
         // Status bar: the keys sit on its right, cardea style.
         assert!(rows[13].trim_end().ends_with("[q] Quit"), "{:?}", rows[13]);
     }

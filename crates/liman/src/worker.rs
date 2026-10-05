@@ -197,6 +197,14 @@ pub fn spawn_git_branches(tx: Sender<AppEvent>, root: PathBuf) {
     });
 }
 
+/// Reads the subfolders of `dir` for the folder tree.
+pub fn spawn_tree_children(tx: Sender<AppEvent>, dir: PathBuf, show_hidden: bool) {
+    thread::spawn(move || {
+        let children = liman_core::tree::subfolders(&dir, show_hidden);
+        let _ = tx.send(AppEvent::TreeChildren { dir, children });
+    });
+}
+
 /// Builds the preview of one path (F3 panel).
 pub fn spawn_preview(tx: Sender<AppEvent>, key: crate::app::PreviewKey) {
     thread::spawn(move || {

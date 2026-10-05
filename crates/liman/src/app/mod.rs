@@ -23,6 +23,7 @@ use liman_core::job::Done;
 use liman_core::{Entry, ListOptions, Place, Places, trash};
 use liman_widgets::breadcrumb::{self, Segment};
 use liman_widgets::grid::{self, GridView};
+use liman_widgets::sidebar::Item as SideItem;
 use liman_widgets::{FileList, ListMode, Sidebar};
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -115,8 +116,12 @@ pub struct App {
     pub list_area: Rect,
     /// Where the sidebar was drawn last frame (empty when hidden). Written by the UI.
     pub sidebar_area: Rect,
-    /// Highlighted place when the Places panel has focus.
+    /// Highlighted row of the Places panel when it has focus (see `Sidebar::item`).
     pub sidebar_selected: usize,
+    /// First row of the Places panel on screen. Written by the UI.
+    pub sidebar_offset: usize,
+    /// The FOLDERS tree of the Places panel.
+    pub tree: liman_core::tree::DirTree,
     /// Where the path bar was drawn last frame. Written by the UI.
     pub path_bar_area: Rect,
     pub places: Places,
@@ -249,7 +254,13 @@ impl App {
             load_from_shell: false,
             list_area: Rect::default(),
             sidebar_area: Rect::default(),
-            sidebar_selected: 0,
+            sidebar_selected: 1,
+            sidebar_offset: 0,
+            tree: liman_core::tree::DirTree::new(if places.home == std::path::Path::new("/") {
+                vec![PathBuf::from("/")]
+            } else {
+                vec![places.home.clone(), PathBuf::from("/")]
+            }),
             path_bar_area: Rect::default(),
             sidebar: places.sidebar_with(&[]),
             bookmarks: Vec::new(),
@@ -398,6 +409,10 @@ impl App {
             } => self.on_counts(generation, counts, done),
             AppEvent::GitDone { label, result } => self.on_git_done(label, result),
             AppEvent::GitDiff { path, lines } => self.on_git_diff(path, lines),
+            AppEvent::TreeChildren { dir, children } => {
+                self.tree.set_children(dir, children);
+                self.dirty = true;
+            }
             AppEvent::GitRemote { root, remote } => self.on_git_remote(&root, remote),
             AppEvent::GitBranches(result) => self.on_git_branches(result),
             AppEvent::Preview { key, preview } => self.on_preview(key, *preview),
@@ -724,9 +739,8 @@ impl App {
                 return;
             }
         }
-        if let Some(i) = Sidebar::row_at(self.sidebar_area, self.sidebar.len(), column, row) {
-            self.sidebar_selected = i;
-            self.open_place(i);
+        if let Some(i) = self.sidebar_row_at(column, row) {
+            self.on_sidebar_click(i, column);
             return;
         }
         if row == self.path_bar_area.y {
@@ -889,12 +903,15 @@ impl App {
             .and_then(|i| self.visible_entry(i))
             .filter(|e| e.is_dir)
             .map(|e| e.path.clone());
-        in_list.or_else(|| {
-            Sidebar::row_at(self.sidebar_area, self.sidebar.len(), column, row)
-                .map(|i| &self.sidebar[i])
-                .filter(|p| p.kind != liman_core::SpecialDir::Recent)
-                .map(|p| p.path.clone())
-        })
+        in_list.or_else(
+            || match self.sidebar_item(self.sidebar_row_at(column, row)?) {
+                SideItem::Place(i) => Some(&self.sidebar[i])
+                    .filter(|p| p.kind != liman_core::SpecialDir::Recent)
+                    .map(|p| p.path.clone()),
+                SideItem::Dir(d) => Some(self.tree.rows()[d].path.clone()),
+                SideItem::Label => None,
+            },
+        )
     }
 
     /// A drag becomes real after the mouse moved a couple of cells (a click may wobble).
@@ -957,36 +974,145 @@ impl App {
         isize::try_from(entries).unwrap_or(1).max(1)
     }
 
-    /// Keys while Places has focus: ↑↓ choose, Enter/→ opens and moves to the files.
-    /// Returns false for keys Places does not use (they work as usual).
+    /// Keys while Places has focus: ↑↓ choose (titles are skipped), Enter opens and moves to the
+    /// files. In the folder tree → opens a branch (or steps into it), ← closes it (or goes to the
+    /// parent). Returns false for keys Places does not use (they work as usual).
     fn on_places_key(&mut self, key: KeyEvent) -> bool {
-        let last = self.sidebar.len().saturating_sub(1);
+        let row = self.sidebar_selected;
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.sidebar_selected = self.sidebar_selected.saturating_sub(1)
+            KeyCode::Up | KeyCode::Char('k') => self.sidebar_selected = self.sidebar_step(row, -1),
+            KeyCode::Down | KeyCode::Char('j') => self.sidebar_selected = self.sidebar_step(row, 1),
+            KeyCode::Home | KeyCode::Char('g') => self.sidebar_selected = self.sidebar_step(0, 1),
+            KeyCode::End | KeyCode::Char('G') => {
+                self.sidebar_selected = self.sidebar_step(self.sidebar_len(), -1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.sidebar_selected = (self.sidebar_selected + 1).min(last)
-            }
-            KeyCode::Home | KeyCode::Char('g') => self.sidebar_selected = 0,
-            KeyCode::End | KeyCode::Char('G') => self.sidebar_selected = last,
             KeyCode::Delete => {
-                if let Some(place) = self.sidebar.get(self.sidebar_selected)
-                    && place.kind == liman_core::SpecialDir::Bookmark
+                if let SideItem::Place(i) = self.sidebar_item(row)
+                    && self.sidebar[i].kind == liman_core::SpecialDir::Bookmark
                 {
-                    let path = place.path.clone();
+                    let path = self.sidebar[i].path.clone();
                     self.toggle_bookmark_for(path);
                 }
             }
-            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-                if self.sidebar_selected < self.sidebar.len() {
-                    self.open_place(self.sidebar_selected);
-                    self.tab.focus = Focus::Files;
+            KeyCode::Right | KeyCode::Char('l')
+                if matches!(self.sidebar_item(row), SideItem::Dir(_)) =>
+            {
+                let SideItem::Dir(d) = self.sidebar_item(row) else {
+                    return true;
+                };
+                let dir = self.tree.rows()[d].clone();
+                if dir.expanded {
+                    self.sidebar_selected = self.sidebar_step(row, 1);
+                } else {
+                    self.expand_tree(&dir.path);
                 }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                if let SideItem::Dir(d) = self.sidebar_item(row) {
+                    let dir = self.tree.rows()[d].clone();
+                    if dir.expanded {
+                        self.tree.collapse(&dir.path);
+                    } else if let Some(parent) = self.tree.rows()[..d]
+                        .iter()
+                        .rposition(|r| r.depth + 1 == dir.depth)
+                    {
+                        self.sidebar_selected = Sidebar::dir_row(self.sidebar.len(), parent);
+                    }
+                }
+            }
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                match self.sidebar_item(row) {
+                    SideItem::Place(i) => self.open_place(i),
+                    SideItem::Dir(d) => self.load(self.tree.rows()[d].path.clone()),
+                    SideItem::Label => return true,
+                }
+                self.tab.focus = Focus::Files;
             }
             _ => return false,
         }
         true
+    }
+
+    // ---- Places panel: quick access and the folder tree ----
+
+    fn sidebar_len(&self) -> usize {
+        Sidebar::len(self.sidebar.len(), self.tree.rows().len())
+    }
+
+    fn sidebar_item(&self, row: usize) -> SideItem {
+        Sidebar::item(self.sidebar.len(), self.tree.rows().len(), row).unwrap_or(SideItem::Label)
+    }
+
+    fn sidebar_row_at(&self, column: u16, row: u16) -> Option<usize> {
+        Sidebar::row_at(
+            self.sidebar_area,
+            self.sidebar_offset,
+            self.sidebar_len(),
+            column,
+            row,
+        )
+    }
+
+    /// The next selectable row from `from` in direction `step` (titles and the rule are skipped);
+    /// `from` itself when there is none.
+    fn sidebar_step(&self, from: usize, step: isize) -> usize {
+        let mut row = from;
+        loop {
+            let Some(next) = row
+                .checked_add_signed(step)
+                .filter(|&r| r < self.sidebar_len())
+            else {
+                return from;
+            };
+            row = next;
+            if self.sidebar_item(row) != SideItem::Label {
+                return row;
+            }
+        }
+    }
+
+    /// A click in Places: a place opens; in the tree, the ▸/▾ opens or closes the branch and the
+    /// name opens the folder.
+    fn on_sidebar_click(&mut self, row: usize, column: u16) {
+        match self.sidebar_item(row) {
+            SideItem::Place(i) => self.open_place(i),
+            SideItem::Dir(d) => {
+                self.sidebar_selected = row;
+                let dir = self.tree.rows()[d].clone();
+                if column == Sidebar::arrow_column(self.sidebar_area, dir.depth) {
+                    if dir.expanded {
+                        self.tree.collapse(&dir.path);
+                    } else {
+                        self.expand_tree(&dir.path);
+                    }
+                } else {
+                    self.load(dir.path);
+                }
+            }
+            SideItem::Label => {}
+        }
+    }
+
+    /// Opens a branch of the tree; its subfolders are read on a worker the first time.
+    fn expand_tree(&mut self, dir: &std::path::Path) {
+        if self.tree.expand(dir) {
+            worker::spawn_tree_children(
+                self.tx.clone(),
+                dir.to_path_buf(),
+                self.options.show_hidden,
+            );
+        }
+    }
+
+    /// After moving to `cwd`: its subfolders are known from the listing, and the tree opens the way
+    /// down to it.
+    fn update_tree(&mut self, mut dirs: Vec<(String, PathBuf)>) {
+        dirs.sort_by(|a, b| liman_core::sort::natural_cmp(&a.0, &b.0));
+        let dirs = dirs.into_iter().map(|(_, path)| path).collect();
+        self.tree.set_children(self.tab.cwd.clone(), dirs);
+        for dir in self.tree.reveal(&self.tab.cwd) {
+            worker::spawn_tree_children(self.tx.clone(), dir, self.options.show_hidden);
+        }
     }
 
     /// `t`: the theme list. Moving through it applies each theme at once (live preview).
@@ -1029,7 +1155,7 @@ impl App {
 
     /// Opens sidebar place `i`: a folder, or the Recent list.
     fn open_place(&mut self, i: usize) {
-        self.sidebar_selected = i;
+        self.sidebar_selected = i + 1; // the row under the QUICK ACCESS title
         let place = self.sidebar[i].clone();
         if place.kind == liman_core::SpecialDir::Recent {
             self.show_recent();
@@ -1076,9 +1202,7 @@ impl App {
             self.message = Some(trf("Bookmarked “{}”", &[&name]));
         }
         self.sidebar = self.places.sidebar_with(&self.bookmarks);
-        self.sidebar_selected = self
-            .sidebar_selected
-            .min(self.sidebar.len().saturating_sub(1));
+        self.sidebar_selected = self.sidebar_selected.min(self.sidebar_len() - 1);
         if !cfg!(test) {
             let file = liman_core::config::bookmarks_path(&self.places.home);
             if let Err(e) = liman_core::config::save_bookmarks(&file, &self.bookmarks) {
@@ -1655,6 +1779,14 @@ impl App {
             }
             Err(err) => Listing::Failed(err),
         };
+        if let (Listing::Ready(entries), None) = (&self.tab.listing, &self.tab.results) {
+            let dirs = entries
+                .iter()
+                .filter(|e| e.is_dir)
+                .map(|e| (e.name.clone(), e.path.clone()))
+                .collect();
+            self.update_tree(dirs);
+        }
         if !to_count.is_empty() {
             self.counts_sorted = Instant::now();
             worker::spawn_counts(
@@ -1903,7 +2035,9 @@ mod tests {
     #[test]
     fn clicking_the_sidebar_or_path_bar_navigates() {
         let (mut app, _rx) = app();
-        app.handle(click(5, 1)); // sidebar row 0: Home (/data)
+        app.handle(click(5, 1)); // the QUICK ACCESS title: nothing
+        assert!(!matches!(app.tab.listing, Listing::Loading));
+        app.handle(click(5, 2)); // the first place: Home (/data)
         assert!(matches!(app.tab.listing, Listing::Loading));
 
         let (tx, _rx) = mpsc::channel();
@@ -2322,6 +2456,40 @@ mod tests {
         app.handle(key(KeyCode::Enter)); // "/" is a folder everywhere
         assert_eq!(app.path_input, None);
         assert_eq!(app.loading_path.as_deref(), Some(Path::new("/")));
+    }
+
+    #[test]
+    fn the_folder_tree_opens_the_way_and_arrows_open_and_close_branches() {
+        let dir = std::env::temp_dir().join(format!("liman-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("a/b")).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let mut app = App::new(dir.join("a"), Places::from_user_dirs("", &dir), tx);
+        let names = |app: &App| -> Vec<String> {
+            app.tree
+                .rows()
+                .iter()
+                .map(|r| format!("{}{}", r.depth, r.name))
+                .collect()
+        };
+        // The listing of `a` and the subfolders of home arrive: home is open down to `a`.
+        while !names(&app).contains(&"1a".to_string()) {
+            app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        }
+        assert!(!names(&app).contains(&"2b".to_string()));
+        let a = app.tree.rows().iter().position(|r| r.name == "a").unwrap();
+        app.tab.focus = Focus::Places;
+        app.sidebar_selected = Sidebar::dir_row(app.sidebar.len(), a);
+        app.handle(key(KeyCode::Right)); // open `a`: its subfolders are known from its listing
+        assert!(names(&app).contains(&"2b".to_string()));
+        app.handle(key(KeyCode::Left)); // close it again
+        assert!(!names(&app).contains(&"2b".to_string()));
+        app.handle(key(KeyCode::Left)); // closed: go to the parent row
+        assert_eq!(
+            app.sidebar_selected,
+            Sidebar::dir_row(app.sidebar.len(), a - 1)
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
