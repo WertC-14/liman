@@ -388,6 +388,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("s / S  (header click)", "sort by / reverse"),
     ("Space / Ctrl+A", "mark / mark all"),
     ("Ctrl+click / Shift+click", "mark one / mark a range"),
+    ("Shift+arrows / Home / End", "mark a range"),
     ("drag onto a folder", "move (hold Ctrl: copy)"),
     ("Ctrl+C  Ctrl+X  Ctrl+V", "copy  cut  paste"),
     ("Del / F2 / Ctrl+Z", "trash / rename / undo"),

@@ -578,6 +578,19 @@ impl App {
             // Ctrl+Shift+N / Ctrl+Shift+C arrive as Ctrl+N / Ctrl+C in most terminals: use Ctrl+N, Alt+C.
             KeyCode::Char('n') if ctrl => self.new_folder(),
             KeyCode::Char('c') if alt => self.copy_paths_osc52(),
+            // Shift+arrows / Home / End / PgUp / PgDn: mark everything from where Shift started.
+            KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+                if key.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
+                self.extend_selection(key.code)
+            }
             // In the grid, left/right move between tiles and up/down jump a row (like Nautilus).
             KeyCode::Right | KeyCode::Char('l') if self.drawn_view == View::Grid => {
                 self.move_selection(1)
@@ -585,8 +598,14 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') if self.drawn_view == View::Grid => {
                 self.move_selection(-1)
             }
-            KeyCode::Down | KeyCode::Char('j') => self.move_selection(self.vertical_step()),
-            KeyCode::Up | KeyCode::Char('k') => self.move_selection(-self.vertical_step()),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.click_anchor = None;
+                self.move_selection(self.vertical_step())
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.click_anchor = None;
+                self.move_selection(-self.vertical_step())
+            }
             KeyCode::PageDown => self.move_selection(self.page()),
             KeyCode::PageUp => self.move_selection(-self.page()),
             KeyCode::Home | KeyCode::Char('g') => self.select_row(0),
@@ -1240,6 +1259,35 @@ impl App {
         }
         let current = self.table.selected().unwrap_or(0);
         self.select_row(current.saturating_add_signed(delta));
+    }
+
+    /// Shift+movement: the anchor (where the range started: the last plain click or the selection
+    /// when Shift was first pressed) stays, the cursor moves, and exactly the range is marked.
+    fn extend_selection(&mut self, code: KeyCode) {
+        let Some(current) = self.table.selected() else {
+            return;
+        };
+        let anchor = *self.click_anchor.get_or_insert(current);
+        let grid = self.drawn_view == View::Grid;
+        match code {
+            KeyCode::Up => self.move_selection(-self.vertical_step()),
+            KeyCode::Down => self.move_selection(self.vertical_step()),
+            KeyCode::Left if grid => self.move_selection(-1),
+            KeyCode::Right if grid => self.move_selection(1),
+            KeyCode::PageUp => self.move_selection(-self.page()),
+            KeyCode::PageDown => self.move_selection(self.page()),
+            KeyCode::Home => self.select_row(0),
+            KeyCode::End => self.select_row(usize::MAX),
+            _ => return,
+        }
+        let to = self.table.selected().unwrap_or(anchor);
+        let (from, to) = (anchor.min(to), anchor.max(to));
+        self.marked = self
+            .visible_entries()
+            .skip(from)
+            .take(to - from + 1)
+            .map(|e| e.path.clone())
+            .collect();
     }
 
     /// Selects `row`, clamped to the last row.
@@ -1898,6 +1946,31 @@ mod tests {
         app.handle(alt(KeyCode::Left)); // up again: /, not back into Projects
         arrive(&mut app, "/", &["data"]);
         assert_eq!(app.cwd, PathBuf::from("/"));
+    }
+
+    #[test]
+    fn shift_arrows_mark_a_range_from_where_shift_started() {
+        let (mut app, _rx) = app(); // /data: Music, Projects
+        arrive(&mut app, "/data", &["a", "b", "c", "d"]);
+        app.drawn_view = View::Detailed;
+        let shift = |code| AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::SHIFT)));
+        app.handle(key(KeyCode::Char('j'))); // b
+        app.handle(shift(KeyCode::Down)); // b..c
+        app.handle(shift(KeyCode::Down)); // b..d
+        let marked = |app: &App| {
+            let mut names: Vec<String> = app
+                .marked
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(marked(&app), ["b", "c", "d"]);
+        app.handle(shift(KeyCode::Up)); // back to b..c
+        assert_eq!(marked(&app), ["b", "c"]);
+        app.handle(shift(KeyCode::Home)); // a..b
+        assert_eq!(marked(&app), ["a", "b"]);
     }
 
     #[test]

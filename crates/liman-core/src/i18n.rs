@@ -369,6 +369,8 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "mark / mark all" => "işaretle / tümünü işaretle",
         "Ctrl+click / Shift+click" => "Ctrl+tık / Shift+tık",
         "mark one / mark a range" => "birini / aralığı işaretle",
+        "Shift+arrows / Home / End" => "Shift+oklar / Home / End",
+        "mark a range" => "aralığı işaretle",
         "drag onto a folder" => "klasörün üstüne sürükle",
         "move (hold Ctrl: copy)" => "taşı (Ctrl basılı: kopyala)",
         "copy  cut  paste" => "kopyala  kes  yapıştır",
