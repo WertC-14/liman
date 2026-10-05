@@ -66,9 +66,10 @@ impl DirTree {
         }
     }
 
-    /// Opens every folder from the root above `dir` down to its parent, so `dir` is visible.
-    /// Returns the folders whose children still have to be read.
-    pub fn reveal(&mut self, dir: &Path) -> Vec<PathBuf> {
+    /// Shows where `dir` is: the folders from its root down to `dir` itself are open, every
+    /// other branch is closed (so the tree never piles up branches opened along the way).
+    /// Returns the folders whose children still have to be read, top down.
+    pub fn focus(&mut self, dir: &Path) -> Vec<PathBuf> {
         // The deepest root that contains `dir` (home before `/`).
         let Some(root) = self
             .roots
@@ -79,21 +80,21 @@ impl DirTree {
         else {
             return Vec::new();
         };
-        let mut missing = Vec::new();
-        let mut opened = false;
-        for ancestor in dir.ancestors().skip(1) {
-            if !ancestor.starts_with(&root) {
-                break;
-            }
-            opened |= self.expanded.insert(ancestor.to_path_buf());
-            if !self.is_loaded(ancestor) {
-                missing.push(ancestor.to_path_buf());
-            }
-        }
-        if opened {
+        let path: HashSet<PathBuf> = dir
+            .ancestors()
+            .take_while(|a| a.starts_with(&root))
+            .map(Path::to_path_buf)
+            .collect();
+        let mut missing: Vec<PathBuf> = path
+            .iter()
+            .filter(|d| !self.is_loaded(d))
+            .cloned()
+            .collect();
+        missing.sort_by_key(|d| d.components().count());
+        if self.expanded != path {
+            self.expanded = path;
             self.rebuild();
         }
-        missing.reverse(); // top down
         missing
     }
 
@@ -165,28 +166,32 @@ mod tests {
     }
 
     #[test]
-    fn reveal_opens_the_way_down_and_asks_for_missing_children() {
+    fn focus_opens_only_the_way_to_the_folder() {
         let mut tree = DirTree::new(vec![p("/home/u"), p("/")]);
         assert_eq!(names(&tree), ["u", "/"]);
-        let missing = tree.reveal(Path::new("/home/u/Projects/liman"));
+        // The way down and the folder itself are open; their children are asked for.
+        let missing = tree.focus(Path::new("/home/u/Projects"));
         assert_eq!(missing, [p("/home/u"), p("/home/u/Projects")]);
         tree.set_children(
             p("/home/u"),
             vec![p("/home/u/Documents"), p("/home/u/Projects")],
         );
         tree.set_children(p("/home/u/Projects"), vec![p("/home/u/Projects/liman")]);
+        tree.set_children(p("/home/u/Documents"), vec![p("/home/u/Documents/notes")]);
         assert_eq!(
             names(&tree),
             ["u", "  Documents", "  Projects", "    liman", "/"]
         );
-        // Already loaded: nothing to read again.
-        assert!(tree.reveal(Path::new("/home/u/Projects/liman")).is_empty());
+        // A branch opened by hand stays open until the next move.
+        assert!(!tree.expand(Path::new("/home/u/Documents")));
+        assert_eq!(names(&tree)[2], "    notes");
+        // Back home: everything below it closes (the user's request, LOG 2026-10-05).
+        assert!(tree.focus(Path::new("/home/u")).is_empty());
+        assert_eq!(names(&tree), ["u", "  Documents", "  Projects", "/"]);
         tree.collapse(Path::new("/home/u"));
         assert_eq!(names(&tree), ["u", "/"]);
-        assert!(!tree.expand(Path::new("/home/u")));
-        assert_eq!(tree.rows().len(), 5);
-        // Outside home: under `/`.
-        assert_eq!(tree.reveal(Path::new("/etc")), [p("/")]);
+        // Outside home: under `/`, and home closes.
+        assert_eq!(tree.focus(Path::new("/etc")), [p("/"), p("/etc")]);
     }
 
     #[test]

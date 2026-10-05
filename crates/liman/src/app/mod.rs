@@ -1136,7 +1136,7 @@ impl App {
         dirs.sort_by(|a, b| liman_core::sort::natural_cmp(&a.0, &b.0));
         let dirs = dirs.into_iter().map(|(_, path)| path).collect();
         self.tree.set_children(self.tab.cwd.clone(), dirs);
-        for dir in self.tree.reveal(&self.tab.cwd) {
+        for dir in self.tree.focus(&self.tab.cwd) {
             worker::spawn_tree_children(self.tx.clone(), dir, self.options.show_hidden);
         }
     }
@@ -2500,18 +2500,19 @@ mod tests {
                 .map(|r| format!("{}{}", r.depth, r.name))
                 .collect()
         };
-        // The listing of `a` and the subfolders of home arrive: home is open down to `a`.
-        while !names(&app).contains(&"1a".to_string()) {
+        // The listing of `a` and the subfolders of home arrive: open down to `a`, and `a`
+        // itself shows its subfolders.
+        while !names(&app).contains(&"2b".to_string()) {
             app.handle(rx.recv_timeout(Duration::from_secs(5)).unwrap());
         }
-        assert!(!names(&app).contains(&"2b".to_string()));
         let a = app.tree.rows().iter().position(|r| r.name == "a").unwrap();
         app.tab.focus = Focus::Places;
         app.sidebar_selected = Sidebar::dir_row(app.sidebar.len(), a);
-        app.handle(key(KeyCode::Right)); // open `a`: its subfolders are known from its listing
-        assert!(names(&app).contains(&"2b".to_string()));
-        app.handle(key(KeyCode::Left)); // close it again
+        app.handle(key(KeyCode::Left)); // close `a`
         assert!(!names(&app).contains(&"2b".to_string()));
+        app.handle(key(KeyCode::Right)); // open it again
+        assert!(names(&app).contains(&"2b".to_string()));
+        app.handle(key(KeyCode::Left));
         app.handle(key(KeyCode::Left)); // closed: go to the parent row
         assert_eq!(
             app.sidebar_selected,
