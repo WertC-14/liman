@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use super::App;
 use crate::worker;
 
-/// What a preview was built for: path and panel size (a resize needs a new image).
+/// What a preview was built for: path and panel size (images only; 0 × 0 for the rest).
 pub type PreviewKey = (PathBuf, u16, u16);
 
 #[derive(Default)]
@@ -48,12 +48,19 @@ impl App {
     /// Called by the UI with the room the preview content has. Starts a build when the selection or
     /// the size changed.
     pub fn want_preview(&mut self, cols: u16, rows: u16) {
-        let Some(path) = self.selected_entry().map(|e| e.path.clone()) else {
+        let Some(entry) = self.selected_entry() else {
             self.preview.current = None;
             self.preview.wanted = None;
             return;
         };
-        let key = (path, cols, rows);
+        // Only an image is built for the panel size; text and folders are cut by the UI, so a
+        // resize (dragging the terminal panel) must not read them again.
+        let (cols, rows) = if entry.file_type == liman_core::FileType::Image {
+            (cols, rows)
+        } else {
+            (0, 0)
+        };
+        let key = (entry.path.clone(), cols, rows);
         if self.preview.wanted.as_ref() == Some(&key) {
             return;
         }
