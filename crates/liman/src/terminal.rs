@@ -46,6 +46,8 @@ pub struct Terminal {
     query_carry: Vec<u8>,
     /// The `cd` sent last and when; the next one waits until the shell is there (or 2 s passed).
     cd_in_flight: Option<(PathBuf, Instant)>,
+    /// When output last looked at a waiting `cd`.
+    cd_checked: Instant,
     /// Output of the command line the user is running (from Enter until the prompt is back).
     capture: Option<Capture>,
 }
@@ -59,6 +61,8 @@ enum Greeting {
     Done,
 }
 
+/// During output, a waiting `cd` is looked at no more often than this.
+const CD_CHECK: Duration = Duration::from_millis(50);
 /// A `cd` the shell has not carried out after this long (no permission, ...) is given up on.
 const CD_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -171,6 +175,7 @@ impl Terminal {
             pending_input: Vec::new(),
             pending_cd: None,
             cd_in_flight: None,
+            cd_checked: Instant::now(),
             query_carry: Vec::new(),
             capture: None,
         })
@@ -183,7 +188,12 @@ impl Terminal {
     pub fn process(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
         self.answer_queries(bytes);
-        self.flush_cd();
+        // A waiting `cd` checks the shell's folder and foreground process (system calls): during
+        // long output not on every chunk. The quiet moment after the output checks once more.
+        if self.is_syncing() && self.cd_checked.elapsed() >= CD_CHECK {
+            self.cd_checked = Instant::now();
+            self.flush_cd();
+        }
         if let Some(capture) = &mut self.capture
             && capture.bytes.len() < MAX_CAPTURE
         {
@@ -195,8 +205,16 @@ impl Terminal {
     /// (device attributes, version, background color, capabilities) and wait for the answer before
     /// showing the prompt; without replies they hang or time out. vt100 only draws, so we reply here.
     fn answer_queries(&mut self, bytes: &[u8]) {
-        let mut data = std::mem::take(&mut self.query_carry);
-        data.extend_from_slice(bytes);
+        // Most output has no escape sequence cut in half: scan the chunk itself, copy nothing.
+        let joined;
+        let data: &[u8] = if self.query_carry.is_empty() {
+            bytes
+        } else {
+            let mut carry = std::mem::take(&mut self.query_carry);
+            carry.extend_from_slice(bytes);
+            joined = carry;
+            &joined
+        };
         let mut replies: Vec<Vec<u8>> = Vec::new();
         let mut i = 0;
         while let Some(pos) = data[i..].iter().position(|&b| b == 0x1b) {
