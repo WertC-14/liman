@@ -736,23 +736,7 @@ impl App {
             }
             // Middle click on a folder (list or Places): open it in a new background tab.
             MouseEventKind::Down(MouseButton::Middle) => {
-                let folder = self
-                    .entry_at(mouse.column, mouse.row)
-                    .and_then(|i| self.visible_entry(i))
-                    .filter(|e| e.is_dir)
-                    .map(|e| e.path.clone())
-                    .or_else(|| {
-                        Sidebar::row_at(
-                            self.sidebar_area,
-                            self.sidebar.len(),
-                            mouse.column,
-                            mouse.row,
-                        )
-                        .map(|i| &self.sidebar[i])
-                        .filter(|p| p.kind != liman_core::SpecialDir::Recent)
-                        .map(|p| p.path.clone())
-                    });
-                if let Some(path) = folder {
+                if let Some(path) = self.folder_at(mouse.column, mouse.row) {
                     self.open_in_background_tab(path);
                 }
             }
@@ -970,6 +954,22 @@ impl App {
         hit.filter(|&i| i < self.visible.len())
     }
 
+    /// The folder under the mouse: a folder in the list or a place in the sidebar (Recent is a
+    /// list, not a folder).
+    fn folder_at(&self, column: u16, row: u16) -> Option<PathBuf> {
+        let in_list = self
+            .entry_at(column, row)
+            .and_then(|i| self.visible_entry(i))
+            .filter(|e| e.is_dir)
+            .map(|e| e.path.clone());
+        in_list.or_else(|| {
+            Sidebar::row_at(self.sidebar_area, self.sidebar.len(), column, row)
+                .map(|i| &self.sidebar[i])
+                .filter(|p| p.kind != liman_core::SpecialDir::Recent)
+                .map(|p| p.path.clone())
+        })
+    }
+
     /// A drag becomes real after the mouse moved a couple of cells (a click may wobble).
     fn on_drag(&mut self, column: u16, row: u16) {
         if let Some(drag) = &mut self.drag
@@ -997,18 +997,7 @@ impl App {
         } else {
             vec![dragged]
         };
-        let folder = self
-            .entry_at(column, row)
-            .and_then(|i| self.visible_entry(i))
-            .filter(|e| e.is_dir)
-            .map(|e| e.path.clone())
-            .or_else(|| {
-                Sidebar::row_at(self.sidebar_area, self.sidebar.len(), column, row)
-                    .map(|i| &self.sidebar[i])
-                    .filter(|p| p.kind != liman_core::SpecialDir::Recent)
-                    .map(|p| p.path.clone())
-            });
-        match folder {
+        match self.folder_at(column, row) {
             Some(dest)
                 if !sources.contains(&dest) && !sources.iter().any(|s| dest.starts_with(s)) =>
             {
