@@ -1488,19 +1488,26 @@ impl App {
         self.select_row(0);
     }
 
-    /// Recomputes `visible` from the filter. Lower-case names are made once per listing; when the
-    /// filter only got longer, the search stays inside the previous matches.
+    /// Recomputes `visible` from the filter. Lower-case names are made once per listing, when a
+    /// filter is first typed; when the filter only got longer, the search stays inside the
+    /// previous matches.
     fn refresh_visible(&mut self) {
         let Listing::Ready(entries) = &self.listing else {
             self.visible.clear();
             return;
         };
+        let needle = self.filter.to_lowercase();
+        if needle.is_empty() {
+            self.visible = (0..entries.len()).collect();
+            self.visible_for.clear();
+            return;
+        }
+        // Made on the first filter key, not for every listing.
         if self.names_lower.len() != entries.len() {
             self.names_lower = entries.iter().map(|e| e.name.to_lowercase()).collect();
         }
-        let needle = self.filter.to_lowercase();
         let narrowing = !self.visible_for.is_empty() && needle.starts_with(&self.visible_for);
-        let matches = |i: &usize| needle.is_empty() || self.names_lower[*i].contains(&needle);
+        let matches = |i: &usize| self.names_lower[*i].contains(&needle);
         self.visible = if narrowing {
             self.visible.iter().copied().filter(matches).collect()
         } else {
