@@ -74,17 +74,17 @@ fn main() -> io::Result<()> {
     liman_widgets::colors::set_truecolor(truecolor);
     let mut app = App::new(cwd, Places::detect(&home), tx);
     app.apply_settings(&settings);
-    let mut last_draw = Instant::now() - FRAME;
+    let mut last_draw: Option<Instant> = None;
     while app.running {
         // Draw only when something changed (dirty flag), never on a fixed tick, and at most
         // once per FRAME: a shell printing thousands of chunks costs 60 frames a second.
         let mut wait = None;
         if app.dirty {
-            let since = last_draw.elapsed();
+            let since = last_draw.map_or(FRAME, |t| t.elapsed());
             if since >= FRAME {
                 tui.draw(|frame| ui::render(frame, &mut app))?;
                 app.dirty = false;
-                last_draw = Instant::now();
+                last_draw = Some(Instant::now());
             } else {
                 wait = Some(FRAME - since);
             }

@@ -164,12 +164,13 @@ impl GitStatus {
 
     /// `main ↑1 ↓2` for the path bar.
     pub fn summary(&self) -> String {
+        use std::fmt::Write as _;
         let mut s = self.branch.clone();
         if self.ahead > 0 {
-            s.push_str(&format!(" ↑{}", self.ahead));
+            let _ = write!(s, " ↑{}", self.ahead);
         }
         if self.behind > 0 {
-            s.push_str(&format!(" ↓{}", self.behind));
+            let _ = write!(s, " ↓{}", self.behind);
         }
         s
     }

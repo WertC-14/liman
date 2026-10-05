@@ -69,11 +69,9 @@ impl Done {
         match self {
             Self::Copied(v) => v.is_empty(),
             Self::Moved(v) => v.is_empty(),
-            Self::Renamed { .. } => false,
             Self::Trashed(v) => v.is_empty(),
-            Self::Undone(_) => false,
             Self::Deleted(n) => *n == 0,
-            Self::Created(_) => false,
+            Self::Renamed { .. } | Self::Undone(_) | Self::Created(_) => false,
             Self::Batch(parts) => parts.iter().all(Done::is_empty),
         }
     }
@@ -157,11 +155,8 @@ impl Job {
                     }
                 })
                 .sum(),
-            Self::Rename { .. } => 1,
-            Self::Trash { paths } => paths.len() as u64,
-            Self::Undo(_) => 1,
-            Self::Delete { paths } => paths.len() as u64,
-            Self::CreateDir { .. } => 1,
+            Self::Trash { paths } | Self::Delete { paths } => paths.len() as u64,
+            Self::Rename { .. } | Self::Undo(_) | Self::CreateDir { .. } => 1,
             Self::Batch(jobs) => jobs.iter().map(Job::total).sum(),
         }
     }

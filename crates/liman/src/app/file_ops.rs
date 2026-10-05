@@ -10,6 +10,9 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use super::App;
 use crate::worker;
 
+/// Ctrl+Z goes back at most this many operations (older records are dropped).
+const MAX_UNDO: usize = 100;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipMode {
     Copy,
@@ -329,6 +332,9 @@ impl App {
         self.select_after_load = focus.or_else(|| self.selected_entry().map(|e| e.name.clone()));
         if outcome.done.is_undoable() {
             self.history.push(outcome.done);
+            if self.history.len() > MAX_UNDO {
+                self.history.remove(0);
+            }
         }
         // Read the folder again in place (no "Loading…" flash); in a results view, back to the folder.
         if self.results.is_some() {
