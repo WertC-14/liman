@@ -361,6 +361,7 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "all keys" => "tüm kısayollar",
         "quit" => "çık",
         "keep filter" => "süzgeci tut",
+        "keep" => "vazgeç",
         "clear" => "temizle",
         "files / full screen" => "dosyalar / tam ekran",
         "focus" => "odak",

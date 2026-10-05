@@ -117,28 +117,15 @@ fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
             (tr(" Paste "), lines)
         }
         Dialog::ConfirmDiscard { paths } => {
-            let lines = vec![
-                Line::from(trf(
-                    "Throw away the changes in {}?",
-                    &[&format::items(paths.len())],
-                ))
-                .fg(theme::fg())
-                .bold(),
-                Line::from(tr(
-                    "Tracked files go back to the last commit; new files go to the trash.",
-                ))
-                .fg(theme::dim()),
-                Line::default(),
-                Line::from(vec![
-                    Span::raw(" y ")
-                        .bold()
-                        .fg(theme::type_color(liman_core::FileType::Pdf)),
-                    Span::raw(tr("discard   ")).fg(theme::fg()),
-                    Span::raw(" n / Esc ").bold().fg(theme::accent()),
-                    Span::raw("keep").fg(theme::fg()),
-                ]),
-            ];
-            (tr(" Git: discard "), lines)
+            let question = trf(
+                "Throw away the changes in {}?",
+                &[&format::items(paths.len())],
+            );
+            let note = "Tracked files go back to the last commit; new files go to the trash.";
+            (
+                tr(" Git: discard "),
+                confirm_lines(question, note, "discard   "),
+            )
         }
         Dialog::ConfirmDelete { paths } => {
             let what = match paths.as_slice() {
@@ -150,30 +137,34 @@ fn render_dialog(frame: &mut Frame, dialog: &crate::app::Dialog) {
                 ),
                 many => format::items(many.len()),
             };
-            let lines = vec![
-                Line::from(trf("Delete {} for good?", &[&what]))
-                    .fg(theme::fg())
-                    .bold(),
-                Line::from(tr(
-                    "This cannot be undone (Del moves to the trash instead).",
-                ))
-                .fg(theme::dim()),
-                Line::default(),
-                Line::from(vec![
-                    Span::raw(" y ")
-                        .bold()
-                        .fg(theme::type_color(liman_core::FileType::Pdf)),
-                    Span::raw(tr("delete   ")).fg(theme::fg()),
-                    Span::raw(" n / Esc ").bold().fg(theme::accent()),
-                    Span::raw("keep").fg(theme::fg()),
-                ]),
-            ];
-            (tr(" Delete for good "), lines)
+            let question = trf("Delete {} for good?", &[&what]);
+            let note = "This cannot be undone (Del moves to the trash instead).";
+            (
+                tr(" Delete for good "),
+                confirm_lines(question, note, "delete   "),
+            )
         }
     };
     let height = lines.len() as u16 + 4;
     let inner = popup(frame, title, 72, height);
     frame.render_widget(Paragraph::new(lines), inner.inner(Margin::new(1, 1)));
+}
+
+/// A yes/no question: the question, a note under it, then `y <verb>   n / Esc keep`.
+fn confirm_lines(question: String, note: &'static str, verb: &'static str) -> Vec<Line<'static>> {
+    vec![
+        Line::from(question).fg(theme::fg()).bold(),
+        Line::from(tr(note)).fg(theme::dim()),
+        Line::default(),
+        Line::from(vec![
+            Span::raw(" y ")
+                .bold()
+                .fg(theme::type_color(liman_core::FileType::Pdf)),
+            Span::raw(tr(verb)).fg(theme::fg()),
+            Span::raw(" n / Esc ").bold().fg(theme::accent()),
+            Span::raw(tr("keep")).fg(theme::fg()),
+        ]),
+    ]
 }
 
 /// Ctrl+G: changed files on the left (status letters, path in the repository), the selected file's
@@ -602,7 +593,7 @@ fn render_tab_row(frame: &mut Frame, app: &mut App, labels: &[crate::app::TabLab
 
 /// A rounded panel with a title; the focused one gets the accent color (style A, fm-research LOG).
 fn panel(title: &str, focused: bool) -> Block<'static> {
-    let accent = liman_widgets::theme::type_color(liman_core::FileType::Folder);
+    let accent = theme::accent();
     Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(if focused { accent } else { theme::border() }))
@@ -629,7 +620,7 @@ fn render_path_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     app.path_bar_area = area;
     if let Some(results) = &app.results {
-        let accent = liman_widgets::theme::type_color(liman_core::FileType::Folder);
+        let accent = theme::accent();
         let line = Line::from(vec![
             Span::raw(" ⌕ ").fg(accent).bold(),
             Span::raw(results.command.clone()).fg(theme::fg()).bold(),
@@ -723,7 +714,7 @@ fn render_terminal(frame: &mut Frame, app: &mut App, area: Rect) {
     app.term_area = area;
     let focused = app.focus == Focus::Terminal || app.term_mode == TermMode::Fullscreen;
     let accent = if focused {
-        liman_widgets::theme::type_color(liman_core::FileType::Folder)
+        theme::accent()
     } else {
         theme::dim()
     };
