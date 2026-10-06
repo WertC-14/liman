@@ -19,7 +19,6 @@ sürüklenir; ama SSH ve tmux içinde de çalışır ve altında gerçek bir ter
 [Önizleme ve okuyucu](#önizleme-ve-okuyucu) ·
 [Terminal](#terminal) ·
 [Sekmeler](#sekmeler) ·
-[Kod sekmeleri](#kod-sekmeleri) ·
 [Git](#git) ·
 [Komut paleti ve sağ tık](#komut-paleti-ve-sağ-tık) ·
 [Renkler ve temalar](#renkler-ve-temalar) ·
@@ -199,22 +198,6 @@ Alt+Enter işaretlilerin hepsine uygulanır; hiçbiri işaretli değilse imlecin
   gösterir. Arka plandaki sekmenin kabuğunda çalışan komut durmaz.
 - Pano, geri alma, görünüm, tema ve sıralama sekmeler arasında **ortaktır**: bir sekmede kopyalayıp öbüründe yapıştırabilirsin.
 - Sekmeler kaydedilmez; liman kapanıp açılınca tek sekmeyle başlar.
-
-## Kod sekmeleri
-
-![Kod sekmesi](img/22-kod-sekmesi.png)
-
-Kod, yapılandırma ve metin dosyaları (Enter ya da çift tık) liman'ın içinde **kendi sekmelerinde** açılır: klasör sekmelerinin
-sağında `✎ ad` olarak. Sekmenin tamamı düzenleyicidir; düzenleyici [fener](https://github.com/WertC-14/fener)'dir (Vim ve
-LazyVim tuşları). 20 MB'tan büyük dosyalar ve diğer türler eskisi gibi kendi uygulamasında açılır.
-
-- **Alt+1** her zaman liman'a döner; **Alt+2…9** diğer sekmelere. Sekmeye tıklamak da geçirir.
-- Solda dosyanın **projesinin klasör ağacı** (git deposunun kökü, yoksa dosyanın klasörü). **Ctrl+H** ağaca, **Ctrl+L** koda
-  geçer; ağaçta **Enter / l** açar, **h** kapatır, **Backspace** bir üst klasörü gösterir, **Space e** ağacı aç/kapa.
-- Tuşları bilmen gerekmez: **Space** basılınca ne gelebileceği kutuda yazar; **Space s k** bütün tuşları listeler, aradığını
-  seçip Enter'la çalıştırırsın. **Space Space** dosya bul, **Space /** metin ara.
-- **:w** kaydeder, **:q** sekmeyi kapatır. Kaydedilmemiş değişiklikte sekmede `●` görünür; **:q** ve liman'ın **q**'su
-  kapatmaz, o sekmeyi gösterip uyarır (**:q!** değişikliği atar).
 
 ## Git
 

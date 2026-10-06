@@ -700,8 +700,7 @@ mod tests {
             KeyModifiers::CONTROL,
         )); // unmark b
         assert_eq!(app.tab.marked.len(), 1);
-        // drag a.txt (marked) onto dest/; not a double click on a.txt (that would open it)
-        app.last_click = None;
+        // drag a.txt (marked) onto dest/
         app.handle(mouse(MouseEventKind::Down(MouseButton::Left), 10, 3, none));
         app.handle(mouse(MouseEventKind::Drag(MouseButton::Left), 12, 2, none));
         app.handle(mouse(MouseEventKind::Up(MouseButton::Left), 12, 2, none));
@@ -727,37 +726,6 @@ mod tests {
         ctrl(&mut app, 'v');
         assert!(app.message.as_deref().unwrap().contains("Ctrl+C"));
         assert!(app.job.is_none());
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn text_files_open_in_code_tabs_and_unsaved_changes_block_quitting() {
-        let (dir, mut app, _rx) = setup("code");
-        app.code.no_state = true;
-        select(&mut app, "a.txt");
-        app.handle(key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.code.active, Some(0));
-        let labels = app.tab_labels();
-        assert_eq!(labels.len(), 2);
-        assert!(labels[1].active && labels[1].title.ends_with("a.txt"));
-        // x deletes in the editor; Alt+1 goes back to liman, where q must not lose the change.
-        app.handle(key(KeyCode::Char('x'), KeyModifiers::NONE));
-        assert!(
-            app.tab_labels()[1].has_shell,
-            "the dot marks unsaved changes"
-        );
-        app.handle(key(KeyCode::Char('1'), KeyModifiers::ALT));
-        assert_eq!(app.code.active, None);
-        app.run_action(crate::app::Action::Quit);
-        assert!(app.running);
-        assert_eq!(app.code.active, Some(0), "the unsaved tab is shown");
-        // :q! drops the change and closes the tab.
-        for c in ":q!".chars() {
-            app.handle(key(KeyCode::Char(c), KeyModifiers::NONE));
-        }
-        app.handle(key(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(app.code.tabs.is_empty() && app.code.active.is_none());
-        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "a");
         fs::remove_dir_all(&dir).unwrap();
     }
 }

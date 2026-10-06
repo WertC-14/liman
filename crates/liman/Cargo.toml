@@ -10,9 +10,6 @@ repository.workspace = true
 [dependencies]
 liman-core.workspace = true
 liman-widgets.workspace = true
-# Code tabs (fm-research ADR 0011): the fener editor, MIT.
-fener-core = { git = "https://github.com/WertC-14/fener" }
-fener-widgets = { git = "https://github.com/WertC-14/fener" }
 notify = { version = "8", default-features = false }
 portable-pty = "0.9"
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }

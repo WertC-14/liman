@@ -12,5 +12,3 @@ yanked = "warn"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# fener (code tabs, ADR 0011), MIT like liman.
-allow-git = ["https://github.com/WertC-14/fener"]

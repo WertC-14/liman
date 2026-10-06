@@ -9,15 +9,13 @@ mod ui;
 mod watch;
 mod worker;
 
-use std::io::{self, stdout};
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use liman_core::Places;
-use ratatui::crossterm::cursor::SetCursorStyle;
-use ratatui::crossterm::execute;
 
 use app::App;
 use tui::Tui;
@@ -75,13 +73,10 @@ fn main() -> io::Result<()> {
     };
     liman_widgets::colors::set_truecolor(truecolor);
     // `icons = nerd` when the terminal font is a Nerd Font; plain Unicode otherwise.
-    let nerd = settings.get("icons").is_some_and(|v| v == "nerd");
-    liman_widgets::icons::set_nerd(nerd);
-    fener_widgets::set_nerd(nerd);
+    liman_widgets::icons::set_nerd(settings.get("icons").is_some_and(|v| v == "nerd"));
     let mut app = App::new(cwd, Places::detect(&home), tx);
     app.apply_settings(&settings);
     let mut last_draw: Option<Instant> = None;
-    let mut cursor_bar: Option<bool> = None;
     while app.running {
         // Draw only when something changed (dirty flag), never on a fixed tick, and at most
         // once per FRAME: a shell printing thousands of chunks costs 60 frames a second.
@@ -89,18 +84,6 @@ fn main() -> io::Result<()> {
         if app.dirty {
             let since = last_draw.map_or(FRAME, |t| t.elapsed());
             if since >= FRAME {
-                // A code tab in Insert mode wants a bar cursor; sent before the frame, so a
-                // terminal that prints the sequence has it drawn over.
-                let bar = app.code_cursor_bar();
-                if bar != cursor_bar {
-                    let style = match bar {
-                        Some(true) => SetCursorStyle::SteadyBar,
-                        Some(false) => SetCursorStyle::SteadyBlock,
-                        None => SetCursorStyle::DefaultUserShape,
-                    };
-                    execute!(stdout(), style)?;
-                    cursor_bar = bar;
-                }
                 tui.draw(|frame| ui::render(frame, &mut app))?;
                 app.dirty = false;
                 last_draw = Some(Instant::now());
@@ -141,9 +124,6 @@ fn main() -> io::Result<()> {
         if let Some((program, path)) = app.external.take() {
             run_external(&mut tui, &input, &program, &path, &mut app)?;
         }
-    }
-    if cursor_bar.is_some() {
-        let _ = execute!(stdout(), SetCursorStyle::DefaultUserShape);
     }
     Ok(())
 }

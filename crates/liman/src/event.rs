@@ -16,13 +16,6 @@ use ratatui::crossterm::event::{self, Event};
 #[derive(Debug)]
 pub enum AppEvent {
     Input(Event),
-    /// A list a code tab's picker asked for (Find Files, grep), made on a worker.
-    CodeItems {
-        id: u64,
-        kind: fener_core::picker::Kind,
-        query: String,
-        items: Vec<fener_core::picker::Item>,
-    },
     /// A directory listing finished on a worker thread.
     Listing {
         generation: u64,
