@@ -432,7 +432,7 @@ impl App {
             Action::TerminalFullScreen => self.toggle_fullscreen(),
             Action::Theme => self.open_theme_picker(),
             Action::Keys => self.help_open = true,
-            Action::Quit => self.running = false,
+            Action::Quit => self.running = self.unsaved_code_tab(),
             Action::GitPanel => self.toggle_git_panel(),
             Action::GitStage => self.git_stage(),
             Action::GitUnstage => self.git_unstage(),

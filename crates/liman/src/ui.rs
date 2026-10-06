@@ -19,7 +19,9 @@ const SIDEBAR_MIN_WIDTH: u16 = 70;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     render_screen(frame, app);
-    if let Some(dialog) = &app.dialog {
+    if app.code.active.is_some() {
+        // liman's popups belong to the folder tabs.
+    } else if let Some(dialog) = &app.dialog {
         render_dialog(frame, dialog);
     } else if app.branch_picker.is_some() {
         render_branch_picker(frame, app);
@@ -461,6 +463,13 @@ fn render_screen(frame: &mut Frame, app: &mut App) {
         render_tab_row(frame, app, &labels, row);
         rest
     };
+    // A code tab: the editor takes everything under the tab row (ADR 0011).
+    if app.code.active.is_some() {
+        if let Some(cursor) = app.render_code_tab(frame.buffer_mut(), screen) {
+            frame.set_cursor_position(cursor);
+        }
+        return;
+    }
     let [top, body, status] = Layout::vertical([
         Constraint::Length(3), // framed title bar with the path chips
         Constraint::Min(0),

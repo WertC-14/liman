@@ -16,6 +16,8 @@ Made for people who like GUI file managers but spend their day in SSH and tmux.
 - Preview panel (F3): file details, syntax colors, formatted Markdown, hex dumps, PDF and archive listings, and real
   images on Kitty / Sixel / iTerm2 terminals (half blocks elsewhere)
 - Tabs (Ctrl+T), each with its own folder and shell
+- Code tabs: text and code files open in the [fener](https://github.com/WertC-14/fener) editor (Vim / LazyVim keys) in a
+  tab of their own, with the project's folder tree beside them; Alt+1 is always back to liman
 - Command palette (Ctrl+P), 8 themes, optional Nerd Font icons, English and Turkish, 256-color fallback
 - Safe by default: trashing asks first and can be undone; home and the well-known folders cannot be removed
 
@@ -35,6 +37,7 @@ The interface speaks English or Turkish (these shots are in Turkish).
 | ![Command palette](docs/img/15-palet.png) **Command palette (Ctrl+P)** | ![Themes](docs/img/16-tema.png) **8 themes**, live preview |
 | ![Formatted Markdown](docs/img/19-markdown.png) **Markdown** formatted in the preview | ![Nerd Font icons](docs/img/20-nerd.png) **Nerd Font icons** (`icons = nerd`) and the folder tree |
 | ![Type a path](docs/img/18-yol-yaz.png) **Ctrl+L**: type a path, Tab completes | ![Trash asks first](docs/img/21-cop-onay.png) **Trash asks first**, Ctrl+Z undoes |
+| ![Code tab](docs/img/22-kod-sekmesi.png) **Code tabs**: fener, with the folder tree | |
 
 ## Install
 

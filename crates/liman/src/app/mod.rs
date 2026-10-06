@@ -1,6 +1,7 @@
 //! Application state. Rendering reads it, events change it.
 
 mod actions;
+mod code_tabs;
 mod file_ops;
 mod git_ops;
 mod preview;
@@ -8,6 +9,7 @@ mod tabs;
 mod terminal_mode;
 
 pub use actions::{Action, HELP, Menu};
+pub use code_tabs::CodeTabs;
 pub use file_ops::{ClipMode, Clipboard, Dialog, JobStatus, RenameInput};
 pub use git_ops::GitPanel;
 pub use preview::{Graphic, PreviewKey, PreviewPane};
@@ -163,6 +165,8 @@ pub struct App {
     pub preview: PreviewPane,
     /// Ctrl+T: the tab row (ADR 0008); the active tab's state is in the fields above.
     pub tabs: Tabs,
+    /// Text files opened in the fener editor, right of the folder tabs (ADR 0011).
+    pub code: CodeTabs,
     /// Command palette (Ctrl+P) or right-click menu.
     pub menu: Option<Menu>,
     /// Where the menu was drawn (for clicks). Written by the UI.
@@ -237,6 +241,7 @@ impl App {
             git_again: false,
             preview: PreviewPane::new(),
             tabs: Tabs::default(),
+            code: CodeTabs::default(),
             menu: None,
             menu_area: Rect::default(),
             rename_after_load: false,
@@ -343,8 +348,29 @@ impl App {
 
     pub fn handle(&mut self, event: AppEvent) {
         match event {
-            AppEvent::Input(Event::Key(key)) if key.kind == KeyEventKind::Press => self.on_key(key),
+            AppEvent::Input(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+                if self.code.active.is_some() {
+                    self.on_code_key(key);
+                } else {
+                    self.on_key(key);
+                }
+            }
+            AppEvent::Input(Event::Paste(text)) if self.code.active.is_some() => {
+                self.on_code_paste(&text);
+            }
+            // In a code tab only the tab row takes clicks.
+            AppEvent::Input(Event::Mouse(mouse)) if self.code.active.is_some() => {
+                if let MouseEventKind::Down(button) = mouse.kind {
+                    self.tab_row_click(mouse.column, mouse.row, button);
+                }
+            }
             AppEvent::Input(Event::Mouse(mouse)) => self.on_mouse(mouse),
+            AppEvent::CodeItems {
+                id,
+                kind,
+                query,
+                items,
+            } => self.on_code_items(id, kind, &query, items),
             AppEvent::Input(Event::Resize(..)) => self.dirty = true,
             AppEvent::Input(_) => {}
             AppEvent::Listing {
@@ -469,7 +495,7 @@ impl App {
             KeyCode::F(4) => return self.toggle_panel(),
             // Alt+1…9 picks a tab from anywhere, the terminal included.
             KeyCode::Char(c @ '1'..='9') if key.modifiers.contains(KeyModifiers::ALT) => {
-                return self.switch_tab(c as usize - '1' as usize);
+                return self.switch_any_tab(c as usize - '1' as usize);
             }
             KeyCode::F(3) => return self.toggle_preview(),
             KeyCode::Char('o') if ctrl => return self.toggle_fullscreen(),
@@ -1424,8 +1450,11 @@ impl App {
         self.open_file(&entry);
     }
 
-    /// Opens a file in its app (or the editor over SSH).
+    /// Opens a file: text in a code tab (ADR 0011), the rest in its app (or `$EDITOR` over SSH).
     fn open_file(&mut self, entry: &Entry) {
+        if code_tabs::opens_in_code_tab(entry) {
+            return self.open_code_tab(&entry.path);
+        }
         match open::plan(entry, &open::Env::current()) {
             OpenPlan::Desktop(path) => {
                 let name = entry.name.clone();

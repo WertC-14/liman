@@ -99,28 +99,51 @@ fn tab_title(cwd: &std::path::Path, home: &std::path::Path) -> String {
 }
 
 impl App {
-    /// Labels for the tab row (empty with a single tab: no row is drawn).
+    /// Labels for the tab row: folder tabs, then code tabs (ADR 0011). Empty with a single
+    /// folder tab and no code tab: no row is drawn.
     pub fn tab_labels(&self) -> Vec<TabLabel> {
-        if self.tabs.count() < 2 {
+        if self.tabs.count() < 2 && self.code.tabs.is_empty() {
             return Vec::new();
         }
         let home = &self.places.home;
-        self.tabs
-            .slots
-            .iter()
-            .map(|slot| match slot {
-                Some(t) => TabLabel {
-                    title: tab_title(&t.cwd, home),
-                    has_shell: t.terminal.is_some(),
-                    active: false,
-                },
-                None => TabLabel {
-                    title: tab_title(&self.tab.cwd, home),
-                    has_shell: self.tab.terminal.is_some(),
-                    active: true,
-                },
-            })
-            .collect()
+        let folder_active = self.code.active.is_none();
+        let current = TabLabel {
+            title: tab_title(&self.tab.cwd, home),
+            has_shell: self.tab.terminal.is_some(),
+            active: folder_active,
+        };
+        let mut labels: Vec<TabLabel> = if self.tabs.slots.is_empty() {
+            vec![current]
+        } else {
+            let mut current = Some(current);
+            self.tabs
+                .slots
+                .iter()
+                .map(|slot| match slot {
+                    Some(t) => TabLabel {
+                        title: tab_title(&t.cwd, home),
+                        has_shell: t.terminal.is_some(),
+                        active: false,
+                    },
+                    None => current.take().expect("one active slot"),
+                })
+                .collect()
+        };
+        for (i, tab) in self.code.tabs.iter().enumerate() {
+            let name = tab
+                .editor
+                .doc
+                .path()
+                .and_then(|p| p.file_name())
+                .map_or_else(|| "[No Name]".into(), |n| n.to_string_lossy().into_owned());
+            labels.push(TabLabel {
+                title: format!("✎ {name}"),
+                // The dot marks unsaved changes on a code tab.
+                has_shell: tab.editor.doc.is_modified(),
+                active: self.code.active == Some(i),
+            });
+        }
+        labels
     }
 
     /// Ctrl+T: a new tab next to this one, in the same folder.
@@ -247,9 +270,12 @@ impl App {
         let Some(i) = self.tabs.chip_areas.iter().position(|r| r.contains(pos)) else {
             return false;
         };
-        self.switch_tab(i);
+        self.switch_any_tab(i);
         if button == MouseButton::Middle {
-            self.close_tab();
+            match self.code.active {
+                Some(code) => self.close_code_tab(code, false),
+                None => self.close_tab(),
+            }
         }
         self.dirty = true;
         true
