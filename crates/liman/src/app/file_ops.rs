@@ -728,4 +728,20 @@ mod tests {
         assert!(app.job.is_none());
         fs::remove_dir_all(&dir).unwrap();
     }
+
+    #[test]
+    fn files_dropped_on_the_window_are_copied_here() {
+        let (dir, mut app, rx) = setup("drop");
+        let elsewhere = dir.with_file_name(format!("liman-drop-src-{}", std::process::id()));
+        fs::create_dir_all(&elsewhere).unwrap();
+        let file = elsewhere.join("from browser.png");
+        fs::write(&file, "img").unwrap();
+        // kitty pastes the dropped file's path, shell-quoted.
+        app.handle(AppEvent::Input(Event::Paste(format!("'{}'", file.display()))));
+        pump(&mut app, &rx, |a| a.job.is_none() && loaded(a));
+        assert_eq!(fs::read_to_string(dir.join("from browser.png")).unwrap(), "img");
+        assert!(file.exists(), "copied, not moved");
+        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&elsewhere).unwrap();
+    }
 }

@@ -315,6 +315,20 @@ impl Terminal {
         }
     }
 
+    /// Pasted text, wrapped in bracketed-paste marks when the program asked for them (so a shell
+    /// does not run a pasted line on its own).
+    pub fn paste(&mut self, text: &str) {
+        self.user_typed = true;
+        if self.parser.screen().bracketed_paste() {
+            let mut bytes = b"\x1b[200~".to_vec();
+            bytes.extend_from_slice(text.as_bytes());
+            bytes.extend_from_slice(b"\x1b[201~");
+            self.send(&bytes);
+        } else {
+            self.send(text.as_bytes());
+        }
+    }
+
     pub fn send(&mut self, bytes: &[u8]) {
         let _ = self.writer.write_all(bytes);
         let _ = self.writer.flush();

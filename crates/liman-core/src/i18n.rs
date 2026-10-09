@@ -90,6 +90,27 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "1 byte" => "1 bayt",
         "{} bytes" => "{} bayt",
         "1 item" => "1 öğe",
+        "Drag to another app" => "Başka uygulamaya sürükle",
+        "Copy as file (Ctrl+V in other apps)" => "Dosya olarak kopyala (başka uygulamada Ctrl+V)",
+        "Alt+D  (drag to the window edge)" => "Alt+D  (pencere kenarına sürükle)",
+        "drop files on the window" => "pencereye dosya bırak",
+        "Copy them into this folder" => "Bu klasöre kopyalanır",
+        "Dragging to other apps needs a desktop (not over SSH)" => {
+            "Başka uygulamaya sürüklemek masaüstü ister (SSH'de olmaz)"
+        }
+        "Drag the files from the small window into the other app" => {
+            "Dosyaları küçük pencereden öbür uygulamaya sürükle"
+        }
+        "ripdrag is not installed: cargo install ripdrag (or Alt+F: copy as file)" => {
+            "ripdrag kurulu değil: cargo install ripdrag (ya da Alt+F: dosya olarak kopyala)"
+        }
+        "Cannot start ripdrag: {}" => "ripdrag başlatılamadı: {}",
+        "Copied {} as a file: Ctrl+V in the other app" => {
+            "{} dosya olarak kopyalandı: öbür uygulamada Ctrl+V"
+        }
+        "Copied {} files: Ctrl+V in the other app" => "{} dosya kopyalandı: öbür uygulamada Ctrl+V",
+        "Cannot copy as file: {} is missing" => "Dosya olarak kopyalanamadı: {} kurulu değil",
+        "Open a folder to drop files into" => "Dosya bırakmak için bir klasör aç",
         "{} items" => "{} öğe",
         "{}+ items" => "{}+ öğe",
         "Today {}" => "Bugün {}",

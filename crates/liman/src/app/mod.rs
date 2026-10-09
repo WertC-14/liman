@@ -1,6 +1,7 @@
 //! Application state. Rendering reads it, events change it.
 
 mod actions;
+mod dnd;
 mod file_ops;
 mod git_ops;
 mod preview;
@@ -345,6 +346,7 @@ impl App {
         match event {
             AppEvent::Input(Event::Key(key)) if key.kind == KeyEventKind::Press => self.on_key(key),
             AppEvent::Input(Event::Mouse(mouse)) => self.on_mouse(mouse),
+            AppEvent::Input(Event::Paste(text)) => self.on_paste(text),
             AppEvent::Input(Event::Resize(..)) => self.dirty = true,
             AppEvent::Input(_) => {}
             AppEvent::Listing {
@@ -889,6 +891,10 @@ impl App {
 
     /// A drag becomes real after the mouse moved a couple of cells (a click may wobble).
     fn on_drag(&mut self, column: u16, row: u16) {
+        // Out of the window: on to the app next to this one (ripdrag).
+        if self.drag.as_ref().is_some_and(|d| d.active) && self.drag_left_window(column, row) {
+            return;
+        }
         if let Some(drag) = &mut self.drag
             && !drag.active
             && (column.abs_diff(drag.start.0) + row.abs_diff(drag.start.1)) >= 2
