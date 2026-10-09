@@ -16,8 +16,8 @@ Made for people who like GUI file managers but spend their day in SSH and tmux.
 - Preview panel (F3): file details, syntax colors, formatted Markdown, hex dumps, PDF and archive listings, and real
   images on Kitty / Sixel / iTerm2 terminals (half blocks elsewhere)
 - Tabs (Ctrl+T), each with its own folder and shell
-- Files to other apps: Alt+F (or drag an entry to the window edge) copies them as files, Ctrl+V in a browser or chat
-  pastes them; files dropped on the window are copied here
+- Files to other apps: Ctrl+C copies them for other apps too (Ctrl+V in a browser or chat); Ctrl+V pastes files copied
+  in another file manager; dragging an entry to the window edge copies it; files dropped on the window are copied here
 - Command palette (Ctrl+P), 8 themes, optional Nerd Font icons, English and Turkish, 256-color fallback
 - Safe by default: trashing asks first and can be undone; home and the well-known folders cannot be removed
 

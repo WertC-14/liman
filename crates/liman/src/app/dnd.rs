@@ -1,7 +1,8 @@
 //! Drag and drop with other apps (fm-research ADR 0014).
 //!
-//! - Out: Alt+F (or dragging an entry to the edge of the window) puts the files on the clipboard
-//!   as files; Ctrl+V in a browser, a chat or a file manager pastes them (ADR 0017: no ripdrag).
+//! - Out: Ctrl+C (or dragging an entry to the edge of the window) also puts the files on the
+//!   system clipboard as files; Ctrl+V in a browser, a chat or a file manager pastes them.
+//! - In from the clipboard: Ctrl+V pastes files another app copied (ADR 0017).
 //! - In: files dropped on the terminal arrive as a paste of their paths; they are copied into the
 //!   open folder. Any other paste goes where typing goes (the shell, an input line).
 
@@ -17,25 +18,21 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::App;
 
 impl App {
-    /// Alt+F: the marked (or selected) files on the clipboard as files (`text/uri-list`), so
-    /// Ctrl+V in a browser, a chat or a file manager pastes the files themselves.
-    pub(super) fn copy_as_files(&mut self) {
-        let paths = self.targets();
-        self.copy_files_to_clipboard(paths);
-    }
-
-    fn copy_files_to_clipboard(&mut self, paths: Vec<PathBuf>) {
-        if paths.is_empty() {
+    /// Puts `paths` on the system clipboard as files (`text/uri-list`), so Ctrl+V in a browser,
+    /// a chat or a file manager pastes them. Quiet: Ctrl+C says what happened.
+    pub(super) fn copy_to_system(&mut self, paths: &[PathBuf]) {
+        // Tests never touch the real clipboard of the person running them.
+        if cfg!(test) {
             return;
         }
-        let list = dnd::uri_list(&paths);
+        let list = dnd::uri_list(paths);
         let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
         let (program, args): (&str, &[&str]) = if wayland {
             ("wl-copy", &["--type", "text/uri-list"])
         } else {
             ("xclip", &["-selection", "clipboard", "-t", "text/uri-list"])
         };
-        let result = Command::new(program)
+        let sent = Command::new(program)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -51,16 +48,33 @@ impl App {
                 });
                 Ok(())
             });
-        self.message = Some(match result {
-            Ok(()) => match paths.as_slice() {
-                [one] => trf(
-                    "Copied {} as a file: Ctrl+V in the other app",
-                    &[&one.file_name().unwrap_or_default().to_string_lossy()],
-                ),
-                many => trf("Copied {} files: Ctrl+V in the other app", &[&many.len()]),
-            },
-            Err(_) => trf("Cannot copy as file: {} is missing", &[&program]),
-        });
+        self.system_clip = sent.is_ok().then_some(list);
+    }
+
+    /// Files another app put on the system clipboard (Ctrl+C in a file manager), when they are
+    /// not the ones liman put there itself.
+    pub(super) fn files_from_system(&self) -> Option<Vec<PathBuf>> {
+        if cfg!(test) {
+            return None;
+        }
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
+        let output = if wayland {
+            Command::new("wl-paste")
+                .args(["--no-newline", "--type", "text/uri-list"])
+                .output()
+        } else {
+            Command::new("xclip")
+                .args(["-selection", "clipboard", "-o", "-t", "text/uri-list"])
+                .output()
+        }
+        .ok()?;
+        let text = String::from_utf8(output.stdout).ok()?;
+        if !output.status.success()
+            || self.system_clip.as_deref().map(str::trim) == Some(text.trim())
+        {
+            return None;
+        }
+        dnd::dropped_paths(&text)
     }
 
     /// A paste (bracketed). Files dropped on the window are copied into the open folder; other
@@ -88,7 +102,7 @@ impl App {
 
     /// Files dropped from another app: copied (never moved) into the open folder; a name that
     /// exists already gets a new one, as with Ctrl+V.
-    fn copy_dropped(&mut self, sources: Vec<PathBuf>) {
+    pub(super) fn copy_dropped(&mut self, sources: Vec<PathBuf>) {
         if self.tab.results.is_some() {
             self.message = Some(tr("Open a folder to drop files into").into());
             return;
@@ -122,7 +136,15 @@ impl App {
         } else {
             vec![dragged]
         };
-        self.copy_files_to_clipboard(sources);
+        self.clipboard = Some(super::Clipboard {
+            mode: super::ClipMode::Copy,
+            paths: sources.clone(),
+        });
+        self.copy_to_system(&sources);
+        self.message = Some(trf(
+            "{} copied: Ctrl+V in a folder here or in another app",
+            &[&liman_core::format::items(sources.len())],
+        ));
         true
     }
 }

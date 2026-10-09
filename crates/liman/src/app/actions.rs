@@ -20,7 +20,6 @@ pub enum Action {
     Rename,
     NewFolder,
     CopyPath,
-    CopyAsFiles,
     Bookmark,
     Trash,
     DeleteForGood,
@@ -60,7 +59,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 46] = [
+    pub const ALL: [Action; 45] = [
         Self::GitPanel,
         Self::GitStage,
         Self::GitUnstage,
@@ -78,7 +77,6 @@ impl Action {
         Self::Rename,
         Self::NewFolder,
         Self::CopyPath,
-        Self::CopyAsFiles,
         Self::Bookmark,
         Self::Trash,
         Self::DeleteForGood,
@@ -110,9 +108,8 @@ impl Action {
     ];
 
     /// Right-click on an entry.
-    pub const ON_ENTRY: [Action; 14] = [
+    pub const ON_ENTRY: [Action; 13] = [
         Self::Open,
-        Self::CopyAsFiles,
         Self::PathsToTerminal,
         Self::Copy,
         Self::Cut,
@@ -154,7 +151,6 @@ impl Action {
             Self::Rename => "Rename",
             Self::NewFolder => "New folder",
             Self::CopyPath => "Copy path to clipboard",
-            Self::CopyAsFiles => "Copy as file (Ctrl+V in other apps)",
             Self::Bookmark => "Pin to Quick Access (toggle)",
             Self::Trash => "Move to trash",
             Self::DeleteForGood => "Delete for good",
@@ -205,7 +201,6 @@ impl Action {
             Self::Rename => "F2",
             Self::NewFolder => "Ctrl+N",
             Self::CopyPath => "Alt+C",
-            Self::CopyAsFiles => "Alt+F",
             Self::Bookmark => "Ctrl+D",
             Self::Trash => "Del",
             Self::DeleteForGood => "Shift+Del",
@@ -278,7 +273,6 @@ pub fn for_key(key: KeyEvent) -> Option<Action> {
         // Ctrl+Shift+N / Ctrl+Shift+C arrive as Ctrl+N / Ctrl+C in most terminals: Ctrl+N, Alt+C.
         KeyCode::Char('n') if ctrl => Action::NewFolder,
         KeyCode::Char('c') if alt => Action::CopyPath,
-        KeyCode::Char('f') if alt => Action::CopyAsFiles,
         KeyCode::Char('~') => Action::Home,
         KeyCode::Char('v') => Action::SmallLarge,
         KeyCode::Char('s') => Action::SortNext,
@@ -340,11 +334,7 @@ pub const HELP: &[Help] = &[
     Help::Keys("Ctrl+click / Shift+click", "Mark one / mark a range"),
     Help::Keys("Shift+arrows / Home / End", "Mark a range"),
     Help::Keys("drag onto a folder", "Move (hold Ctrl: copy)"),
-    Help::Action(Action::CopyAsFiles),
-    Help::Keys(
-        "drag to the window edge",
-        "Copy as file (Ctrl+V in the other app)",
-    ),
+    Help::Keys("drag to the window edge", "Copy (Ctrl+V in another app)"),
     Help::Keys("drop files on the window", "Copy them into this folder"),
     Help::Action(Action::Copy),
     Help::Action(Action::Cut),
@@ -405,7 +395,6 @@ impl App {
             Action::Rename => self.begin_rename(),
             Action::NewFolder => self.new_folder(),
             Action::CopyPath => self.copy_paths_osc52(),
-            Action::CopyAsFiles => self.copy_as_files(),
             Action::Bookmark => self.toggle_bookmark(),
             Action::Trash => self.trash_targets(),
             Action::DeleteForGood => self.ask_delete(),
@@ -503,7 +492,6 @@ impl App {
             | Action::Trash
             | Action::DeleteForGood
             | Action::CopyPath
-            | Action::CopyAsFiles
             | Action::PathsToTerminal => has_entry,
             Action::Paste => self.clipboard.is_some(),
             Action::Undo => !self.history.is_empty(),

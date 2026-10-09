@@ -172,6 +172,8 @@ pub struct App {
     rename_after_load: bool,
     /// A question in the middle of the screen (paste conflicts, permanent delete).
     pub dialog: Option<Dialog>,
+    /// What liman last put on the system clipboard (to tell it from another app's copy).
+    system_clip: Option<String>,
     /// Ctrl+F: the search text being typed.
     pub search_input: Option<String>,
     /// Ctrl+L: a path being typed into the path bar.
@@ -230,6 +232,7 @@ impl App {
             search_input: None,
             path_input: None,
             dialog: None,
+            system_clip: None,
             watch: crate::watch::FolderWatch::start(tx.clone()),
             git_busy: false,
             git_panel: None,

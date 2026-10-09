@@ -90,10 +90,10 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "1 byte" => "1 bayt",
         "{} bytes" => "{} bayt",
         "1 item" => "1 öğe",
-        "Copy as file (Ctrl+V in other apps)" => "Dosya olarak kopyala (başka uygulamada Ctrl+V)",
         "drag to the window edge" => "pencere kenarına sürükle",
-        "Copy as file (Ctrl+V in the other app)" => {
-            "Dosya olarak kopyalanır (öbür uygulamada Ctrl+V)"
+        "Copy (Ctrl+V in another app)" => "Kopyalanır (başka uygulamada Ctrl+V)",
+        "{} copied: Ctrl+V in a folder here or in another app" => {
+            "{} kopyalandı: burada bir klasörde ya da başka uygulamada Ctrl+V"
         }
         "drop files on the window" => "pencereye dosya bırak",
         "Copy them into this folder" => "Bu klasöre kopyalanır",
@@ -231,9 +231,6 @@ pub fn turkish(en: &str) -> Option<&'static str> {
         "Creating a folder" => "Klasör oluşturuluyor",
         "Copied path {}" => "Yol kopyalandı: {}",
         "Copied {} paths" => "{} yol kopyalandı",
-        "{} ready to copy: open a folder and press Ctrl+V" => {
-            "{} kopyalanmaya hazır: bir klasör açıp Ctrl+V'ye basın"
-        }
         "{} ready to move: open a folder and press Ctrl+V" => {
             "{} taşınmaya hazır: bir klasör açıp Ctrl+V'ye basın"
         }

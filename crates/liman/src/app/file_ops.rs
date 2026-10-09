@@ -117,16 +117,24 @@ impl App {
             return;
         }
         let template = match mode {
-            ClipMode::Copy => "{} ready to copy: open a folder and press Ctrl+V",
+            ClipMode::Copy => "{} copied: Ctrl+V in a folder here or in another app",
             ClipMode::Cut => "{} ready to move: open a folder and press Ctrl+V",
         };
         self.message = Some(trf(template, &[&liman_core::format::items(paths.len())]));
+        // A copy goes to the system clipboard too, as files (Ctrl+V in a browser or a chat).
+        if mode == ClipMode::Copy {
+            self.copy_to_system(&paths);
+        }
         self.clipboard = Some(Clipboard { mode, paths });
         self.tab.marked.clear();
     }
 
     /// Ctrl+V. If names already exist here, asks first (keep both / replace / skip).
     pub(super) fn paste(&mut self) {
+        // Files copied in another app (a file manager) come first: they are newer than ours.
+        if let Some(paths) = self.files_from_system() {
+            return self.copy_dropped(paths);
+        }
         let Some(clip) = &self.clipboard else {
             self.message = Some(tr("Nothing to paste: use Ctrl+C or Ctrl+X first").into());
             return;
