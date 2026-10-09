@@ -1,7 +1,7 @@
 //! Drag and drop with other apps (fm-research ADR 0014).
 //!
-//! - Out: `ripdrag` shows the files in a small window to drag from (Alt+D, the right-click menu,
-//!   or dragging an entry to the edge of the window); Alt+F puts them on the clipboard as files.
+//! - Out: Alt+F (or dragging an entry to the edge of the window) puts the files on the clipboard
+//!   as files; Ctrl+V in a browser, a chat or a file manager pastes them (ADR 0017: no ripdrag).
 //! - In: files dropped on the terminal arrive as a paste of their paths; they are copied into the
 //!   open folder. Any other paste goes where typing goes (the shell, an input line).
 
@@ -17,52 +17,14 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::App;
 
 impl App {
-    /// Alt+D: the marked (or selected) files in a ripdrag window, to drag into another app.
-    pub(super) fn drag_out_targets(&mut self) {
-        let paths = self.targets();
-        self.drag_out(paths);
-    }
-
-    pub(super) fn drag_out(&mut self, paths: Vec<PathBuf>) {
-        if paths.is_empty() {
-            return;
-        }
-        if !has_display() {
-            self.message = Some(tr("Dragging to other apps needs a desktop (not over SSH)").into());
-            return;
-        }
-        // -x: close after the drop, -n: a click does not open the file, -s: a bigger handle.
-        // One file is shown as itself (a thumbnail for pictures); several as one "N items"
-        // handle (-A) that carries them all, without ripdrag's separate "drag all" button.
-        let several: &[&str] = if paths.len() > 1 { &["-A"] } else { &["-b"] };
-        let spawned = Command::new("ripdrag")
-            .args(["-x", "-n", "-s", "64"])
-            .args(several)
-            .args(&paths)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-        self.message = Some(match spawned {
-            Ok(mut child) => {
-                // Reaped in the background, so no zombie is left behind.
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
-                tr("Drag the files from the small window into the other app").into()
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tr("ripdrag is not installed: cargo install ripdrag (or Alt+F: copy as file)")
-                    .into()
-            }
-            Err(e) => trf("Cannot start ripdrag: {}", &[&e]),
-        });
-    }
-
     /// Alt+F: the marked (or selected) files on the clipboard as files (`text/uri-list`), so
     /// Ctrl+V in a browser, a chat or a file manager pastes the files themselves.
     pub(super) fn copy_as_files(&mut self) {
         let paths = self.targets();
+        self.copy_files_to_clipboard(paths);
+    }
+
+    fn copy_files_to_clipboard(&mut self, paths: Vec<PathBuf>) {
         if paths.is_empty() {
             return;
         }
@@ -140,8 +102,8 @@ impl App {
         self.start_job(Job::Copy { sources, dest }, trf("Copying {}", &[&n]));
     }
 
-    /// While an entry is dragged: reaching the edge of the window hands it to ripdrag, so it can
-    /// go on into the app next to this one. True when that happened.
+    /// While an entry is dragged: reaching the edge of the window copies it as a file, so Ctrl+V
+    /// in the app next to this one pastes it (no helper window: ADR 0017). True when that happened.
     pub(super) fn drag_left_window(&mut self, column: u16, row: u16) -> bool {
         let Ok((width, height)) = ratatui::crossterm::terminal::size() else {
             return false;
@@ -160,13 +122,7 @@ impl App {
         } else {
             vec![dragged]
         };
-        self.drag_out(sources);
+        self.copy_files_to_clipboard(sources);
         true
     }
-}
-
-fn has_display() -> bool {
-    ["WAYLAND_DISPLAY", "DISPLAY"]
-        .iter()
-        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
 }

@@ -16,8 +16,8 @@ Made for people who like GUI file managers but spend their day in SSH and tmux.
 - Preview panel (F3): file details, syntax colors, formatted Markdown, hex dumps, PDF and archive listings, and real
   images on Kitty / Sixel / iTerm2 terminals (half blocks elsewhere)
 - Tabs (Ctrl+T), each with its own folder and shell
-- Drag and drop with other apps: Alt+D (or drag an entry to the window edge) opens [ripdrag](https://github.com/nik012003/ripdrag)
-  to drop it into a browser or chat, Alt+F copies it as a file (Ctrl+V there); files dropped on the window are copied here
+- Files to other apps: Alt+F (or drag an entry to the window edge) copies them as files, Ctrl+V in a browser or chat
+  pastes them; files dropped on the window are copied here
 - Command palette (Ctrl+P), 8 themes, optional Nerd Font icons, English and Turkish, 256-color fallback
 - Safe by default: trashing asks first and can be undone; home and the well-known folders cannot be removed
 

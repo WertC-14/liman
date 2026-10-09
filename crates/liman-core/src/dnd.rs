@@ -1,5 +1,5 @@
 //! Drag and drop with other apps (fm-research ADR 0014). A terminal cannot start a system drag
-//! itself; the app hands files to `ripdrag`, or puts them on the clipboard as files. Files dropped
+//! itself; the app puts them on the clipboard as files (ADR 0017). Files dropped
 //! on the terminal window arrive as pasted text (kitty, foot, ... paste their paths); this module
 //! tells such a paste from ordinary text.
 

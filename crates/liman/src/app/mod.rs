@@ -891,7 +891,7 @@ impl App {
 
     /// A drag becomes real after the mouse moved a couple of cells (a click may wobble).
     fn on_drag(&mut self, column: u16, row: u16) {
-        // Out of the window: on to the app next to this one (ripdrag).
+        // Out of the window: copied as a file, for Ctrl+V in the app next to this one.
         if self.drag.as_ref().is_some_and(|d| d.active) && self.drag_left_window(column, row) {
             return;
         }
