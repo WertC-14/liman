@@ -31,9 +31,13 @@ impl App {
             self.message = Some(tr("Dragging to other apps needs a desktop (not over SSH)").into());
             return;
         }
-        // -x: close after the drop, -a: one handle for all files, -n: a click does not open them.
+        // -x: close after the drop, -n: a click does not open the file, -s: a bigger handle.
+        // One file is shown as itself (a thumbnail for pictures); several as one "N items"
+        // handle (-A) that carries them all, without ripdrag's separate "drag all" button.
+        let several: &[&str] = if paths.len() > 1 { &["-A"] } else { &["-b"] };
         let spawned = Command::new("ripdrag")
-            .args(["-x", "-a", "-n", "-b"])
+            .args(["-x", "-n", "-s", "64"])
+            .args(several)
             .args(&paths)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
